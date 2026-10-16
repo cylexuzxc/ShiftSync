@@ -88,6 +88,14 @@ label { display: block; margin: 14px 0 6px; color: #334155; font-size: .86rem; f
 form > label:first-child { margin-top: 0; }
 .row { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 9px; margin-top: 18px; }
 .err { min-height: 1.25em; margin: 6px 0 0; color: #b42318; font-size: .84rem; }
+.form-warning, .conflict-flag {
+  display: block;
+  margin: 8px 0 0;
+  color: #92400e;
+  font-size: .82rem;
+  font-weight: 600;
+}
+.form-warning:empty { display: none; }
 
 /* Login */
 .login {
@@ -239,7 +247,7 @@ main#view { width: 100%; max-width: 1500px; margin: 0 auto; padding: 30px clamp(
   border-left: 3px solid var(--c);
   border-radius: 6px;
   background: color-mix(in srgb, var(--c) 11%, #fff);
-  color: color-mix(in srgb, var(--c) 78%, #172338);
+  color: #172338;
   font-size: .73rem;
   font-weight: 600;
   line-height: 1.35;
@@ -262,16 +270,27 @@ tbody tr:last-child th, tbody tr:last-child td { border-bottom: 0; }
 .table-scroll td:nth-child(5) { min-width: 155px; }
 .table-scroll td input { min-width: 140px; min-height: 38px; }
 .table-actions { flex-wrap: nowrap; gap: 7px; margin: 0; }
-.wk { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0 0 14px; }
-.wk-range { margin-left: 5px; color: #334155; font-size: .88rem; }
-.schedule-scroll { border: 1px solid #e8edf4; border-radius: 9px; }
-.grid { width: 100%; min-width: 760px; table-layout: fixed; }
+.schedule-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 14px; margin: 0 0 12px; }
+.schedule-toolbar > .btn { margin-right: auto; }
+.wk { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.wk-range { color: #334155; font-size: .9rem; }
+.shift-legend { display: flex; flex-wrap: wrap; gap: 8px 14px; margin: 0 0 12px; padding: 0; list-style: none; }
+.shift-legend li { min-width: 0; }
+.schedule-scroll { min-width: 0; border: 1px solid #e8edf4; border-radius: 9px; }
+.grid { width: 100%; min-width: 860px; table-layout: fixed; }
+.grid col.employee-col { width: 158px; }
 .grid th, .grid td { width: auto; padding: 8px 5px; text-align: center; }
-.grid thead th { height: 46px; color: #475569; white-space: nowrap; }
+.grid thead th { height: 52px; color: #475569; white-space: nowrap; }
+.grid thead th span { display: block; }
+.grid thead th span + span { font-size: .76rem; font-weight: 550; }
 .grid thead th:first-child, .grid tbody th { width: 150px; text-align: left; }
 .grid thead th:first-child { padding-left: 12px; }
-.grid tbody th { overflow-wrap: anywhere; }
-.grid .today { color: var(--blue-dark); background: #eff6ff; }
+.grid tbody th { overflow-wrap: anywhere; font-size: .86rem; }
+.grid .day-past { background: #f8fafc; }
+.grid thead .day-past { color: #64748b; }
+.grid .day-today { background: #eaf1ff; }
+.grid thead .day-today { color: #1d4ed8; font-weight: 800; box-shadow: inset 0 -2px #2563eb; }
+.grid thead .day-future { background: #f8fafc; }
 .grid td { height: 57px; }
 .cell {
   display: grid;
@@ -286,9 +305,13 @@ tbody tr:last-child th, tbody tr:last-child td { border-bottom: 0; }
   cursor: pointer;
 }
 .cell:hover { border-color: #a5b4fc; background: #f5f7ff; }
+.cell.assignable { border-color: #d5deed; background: #fbfdff; }
+.cell.assignable:hover { border-color: #8299ed; background: #eff4ff; color: #1d4ed8; }
 .cell .pill { width: 100%; max-height: 43px; }
 .cell .badge { white-space: normal; }
-.cell-empty { color: #94a3b8; }
+.cell-empty { color: #64748b; font-size: .76rem; font-weight: 600; }
+.cell-blocked { color: #94a3b8; font-size: .72rem; }
+.leave-cell { background: #f0fdf4; }
 
 /* Dialog and feedback */
 dialog {
@@ -304,6 +327,9 @@ dialog {
 }
 dialog::backdrop { background: rgba(15, 23, 42, .48); }
 dialog h2 { margin-bottom: 15px; }
+.dialog-context { margin: -5px 0 12px; padding: 9px 11px; border-radius: 8px; background: #f1f5f9; color: #475569; font-size: .84rem; }
+.dialog-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin-top: 16px; }
+.dialog-actions > span { flex: 1 1 auto; }
 #toast {
   position: fixed;
   z-index: 10;
@@ -353,6 +379,11 @@ dialog h2 { margin-bottom: 15px; }
   .wk { gap: 6px; }
   .wk .btn { min-height: 37px; padding: 7px 9px; font-size: .82rem; }
   .wk-range { width: 100%; margin: 3px 0 0; }
+  .schedule-toolbar { align-items: stretch; }
+  .schedule-toolbar > .btn { width: 100%; }
+  .schedule-toolbar .wk { width: 100%; }
+  .schedule-toolbar .wk .btn { flex: 1 1 auto; }
+  .schedule-toolbar .wk-range { width: 100%; }
   .row .btn { flex: 1 1 auto; }
   #toast { right: 16px; bottom: 16px; left: 16px; max-width: none; text-align: center; }
 }

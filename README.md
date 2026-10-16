@@ -26,9 +26,9 @@ This demo login is not secure authentication. Do not use real credentials or sen
 ## Features
 
 - Employee dashboard with upcoming shifts, a weekly schedule, and recent leave requests.
-- Leave submission with required-field, date-order, and reason validation.
+- Leave submission with local-date validation, overlapping-request prevention, and visible schedule-conflict warnings.
 - Administrator dashboard with employee, shift, pending-request, and daily staffing counts calculated from the sample data.
-- Weekly schedule management with previous/current/next week navigation, shift assignment, editing, deletion, and shift-type management.
+- Weekly schedule management with year-inclusive week navigation, a shift-color legend, keyboard-accessible assignment cells, historical-shift editing, and shift-type management.
 - Leave approval and rejection; a remark is required to reject a request.
 - Responsive navigation, tables, and schedule grid for desktop through mobile viewports.
 

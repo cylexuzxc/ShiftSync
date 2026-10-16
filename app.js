@@ -5,7 +5,19 @@ const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':
 const user = id => DB.users.find(u => u.id == id);
 const shift = id => DB.shifts.find(s => s.id == id);
 const emps = () => DB.users.filter(u => u.role === 'employee');
-const fmtD = d => new Date(d + 'T00:00').toLocaleDateString('en', {weekday:'short', month:'short', day:'numeric'});
+const dateFromYMD = value => {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const [year, month, day] = value.split('-').map(Number);
+  const date = new Date(0);
+  date.setHours(0, 0, 0, 0);
+  date.setFullYear(year, month - 1, day);
+  return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day ? date : null;
+};
+const validYMD = value => dateFromYMD(value) !== null;
+const fmtD = value => {
+  const date = dateFromYMD(value);
+  return date ? date.toLocaleDateString('en', {weekday:'short', month:'short', day:'numeric', year:'numeric'}) : 'Invalid date';
+};
 const pill = s => `<span class="pill" style="--c:${s.color}">${esc(s.name)} ${s.start}–${s.end}</span>`;
 const badge = s => `<span class="badge ${s}">${esc(s)}</span>`;
 const DAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
@@ -25,22 +37,41 @@ function toast(m, err) {
   }, 3200);
 }
 const onLeave = (id, d) => DB.leaves.some(l => l.emp == id && l.status === 'approved' && l.start <= d && d <= l.end);
+const scheduleConflicts = (id, start, end) => DB.schedules
+  .filter(s => s.emp == id && s.date >= start && s.date <= end)
+  .sort((a, b) => a.date.localeCompare(b.date));
+const conflictText = conflicts => conflicts.length
+  ? `Scheduled shift${conflicts.length === 1 ? '' : 's'}: ${conflicts.map(s => `${fmtD(s.date)} (${shift(s.shift)?.name || 'Shift'})`).join(', ')}`
+  : '';
 
 function leaveList(ls) {
   if (!ls.length) return '<p class="empty">No leave requests yet.</p>';
-  return `<ul class="list">${ls.map(l => `<li><span><b>${esc(l.type)}</b><br><span class="muted small">${fmtD(l.start)} – ${fmtD(l.end)}${l.remarks ? ' · ' + esc(l.remarks) : ''}</span></span>${badge(l.status)}</li>`).join('')}</ul>`;
+  return `<ul class="list">${ls.map(l => {
+    const conflicts = conflictText(scheduleConflicts(l.emp, l.start, l.end));
+    return `<li><span><b>${esc(l.type)}</b><br><span class="muted small">${fmtD(l.start)} – ${fmtD(l.end)}${l.remarks ? ' · ' + esc(l.remarks) : ''}</span>${conflicts ? `<br><span class="conflict-flag">${esc(conflicts)}</span>` : ''}</span>${badge(l.status)}</li>`;
+  }).join('')}</ul>`;
 }
 
 // Weekly schedule grid; edit=true makes cells clickable (admin)
 function grid(list, edit) {
   const days = [...Array(7)].map((_, i) => add(S.week, i)), today = ymd(new Date());
-  const r = d => d.toLocaleDateString('en', {month:'short', day:'numeric'});
-  return `<div class="wk"><button class="btn ghost" data-act="wk" data-n="-1">‹ Prev</button><button class="btn ghost" data-act="wk" data-n="0">This week</button><button class="btn ghost" data-act="wk" data-n="1">Next ›</button><b class="wk-range">${r(days[0])} – ${r(days[6])}</b></div>
-  <div class="scroll schedule-scroll"><table class="grid" aria-label="Weekly employee schedule"><colgroup><col class="employee-col">${days.map(() => '<col>').join('')}</colgroup><thead><tr><th scope="col">Employee</th>${days.map((d, i) => `<th scope="col" class="${ymd(d) == today ? 'today' : ''}">${DAYS[i]} ${d.getDate()}</th>`).join('')}</tr></thead><tbody>
+  const dayState = d => ymd(d) < today ? 'day-past' : ymd(d) === today ? 'day-today' : 'day-future';
+  const r = d => d.toLocaleDateString('en', {month:'short', day:'numeric', year:'numeric'});
+  const legend = edit ? `<ul class="shift-legend" aria-label="Shift legend">${DB.shifts.map(s => `<li>${pill(s)}</li>`).join('')}</ul>` : '';
+  return `<div class="schedule-toolbar">${edit ? '<button class="btn" data-act="assign" aria-label="Assign a shift">Assign shift</button>' : ''}
+    <div class="wk" aria-label="Schedule week navigation"><button class="btn ghost" data-act="wk" data-n="-1" aria-label="Previous week">Previous</button><button class="btn ghost" data-act="wk" data-n="0" aria-label="Go to this week">This week</button><button class="btn ghost" data-act="wk" data-n="1" aria-label="Next week">Next</button></div>
+    <b class="wk-range">${r(days[0])} – ${r(days[6])}</b></div>${legend}
+  <div class="scroll schedule-scroll" tabindex="0" role="region" aria-label="Weekly employee schedule; scroll horizontally to view all days"><table class="grid" aria-label="Weekly employee schedule"><colgroup><col class="employee-col">${days.map(() => '<col>').join('')}</colgroup><thead><tr><th scope="col">Employee</th>${days.map((d, i) => `<th scope="col" class="${dayState(d)}"><span>${DAYS[i]}</span><span>${d.toLocaleDateString('en', {month:'short', day:'numeric'})}</span></th>`).join('')}</tr></thead><tbody>
   ${list.map(e => `<tr><th>${esc(e.name)}</th>${days.map(d => {
     const x = DB.schedules.find(s => s.emp == e.id && s.date == ymd(d));
-    const c = x ? pill(shift(x.shift)) : onLeave(e.id, ymd(d)) ? '<span class="badge approved">On leave</span>' : '<span class="cell-empty" aria-hidden="true">—</span>';
-    return `<td>${edit ? `<button class="cell" data-act="cell" data-emp="${e.id}" data-date="${ymd(d)}" aria-label="${x ? 'Edit' : 'Add'} shift for ${esc(e.name)} on ${fmtD(ymd(d))}">${c}</button>` : c}</td>`;
+    const leave = !x && onLeave(e.id, ymd(d));
+    const past = ymd(d) < today;
+    const c = x ? pill(shift(x.shift)) : leave ? '<span class="badge approved">Approved leave</span>' : edit && past ? '<span class="cell-blocked" title="New shifts cannot be assigned in the past">Past date</span>' : edit ? '<span class="cell-empty">+ Assign</span>' : '<span class="cell-empty">—</span>';
+    const actionable = edit && (x || (!leave && !past));
+    const content = actionable
+      ? `<button class="cell${x ? ' has-shift' : ' assignable'}" data-act="cell" data-emp="${e.id}" data-date="${ymd(d)}" aria-label="${x ? 'Edit' : 'Assign'} shift for ${esc(e.name)} on ${fmtD(ymd(d))}">${c}</button>`
+      : c;
+    return `<td class="${dayState(d)}${leave ? ' leave-cell' : ''}">${content}</td>`;
   }).join('')}</tr>`).join('')}</tbody></table></div>`;
 }
 
@@ -57,12 +88,14 @@ const VIEWS = {
   sched() { return `<div class="head"><h1>My Schedule</h1></div><section class="card">${grid([S.user])}</section>`; },
   leave() {
     const mine = DB.leaves.filter(l => l.emp == S.user.id).reverse();
+    const today = ymd(new Date());
     return `<div class="head"><h1>Request Leave</h1></div><div class="cols">
     <section class="card"><form data-form="leave" novalidate>
       <label for="lt">Leave type</label><select id="lt" name="type" required aria-describedby="lerr2"><option value="">Select a leave type</option><option>Vacation</option><option>Sick</option><option>Personal</option><option>Emergency</option></select>
-      <label for="ls">Start date</label><input id="ls" name="start" type="date" required aria-describedby="lerr2">
-      <label for="le">End date</label><input id="le" name="end" type="date" required aria-describedby="lerr2">
+      <label for="ls">Start date</label><input id="ls" name="start" type="date" min="${today}" required aria-describedby="lerr2 leave-conflicts">
+      <label for="le">End date</label><input id="le" name="end" type="date" min="${today}" required aria-describedby="lerr2 leave-conflicts">
       <label for="lr">Reason</label><textarea id="lr" name="reason" rows="3" minlength="5" required aria-describedby="lerr2"></textarea>
+      <p class="form-warning" id="leave-conflicts" role="status" aria-live="polite"></p>
       <p class="err" id="lerr2" role="alert" aria-live="polite"></p><button class="btn">Submit request</button></form></section>
     <section class="card"><h2>My leave requests</h2>${leaveList(mine)}</section></div>`;
   },
@@ -80,14 +113,18 @@ const VIEWS = {
     <section class="card"><h2>Today's shifts</h2>${today.length ? `<ul class="list">${today.map(s => `<li><span>${esc(user(s.emp).name)}</span>${pill(shift(s.shift))}</li>`).join('')}</ul>` : '<p class="empty">No shifts scheduled today.</p>'}</section>`;
   },
   asched() {
-    return `<div class="head"><h1>Schedule Management</h1><div class="row" style="margin:0"><button class="btn ghost" data-act="types">Manage shift types</button><button class="btn" data-act="assign">Assign shift</button></div></div>
-    <section class="card"><p class="muted small">Click any cell to add, edit, or remove an assignment.</p>${grid(emps(), true)}</section>`;
+    return `<div class="head"><h1>Schedule Management</h1><button class="btn ghost" data-act="types">Manage shift types</button></div>
+    <section class="card"><p class="muted small">Select an available date to assign a shift. Existing shifts can be edited or deleted, including historical shifts.</p>${grid(emps(), true)}</section>`;
   },
   aleave() {
     const p = DB.leaves.filter(l => l.status == 'pending'), h = DB.leaves.filter(l => l.status != 'pending').reverse();
+    const dateCell = l => {
+      const conflicts = conflictText(scheduleConflicts(l.emp, l.start, l.end));
+      return `${fmtD(l.start)} – ${fmtD(l.end)}${conflicts ? `<br><span class="conflict-flag">${esc(conflicts)}</span>` : ''}`;
+    };
     return `<div class="head"><h1>Leave Management</h1></div>
-    <section class="card"><h2>Pending requests (${p.length})</h2>${p.length ? `<div class="scroll table-scroll"><table><thead><tr><th scope="col">Employee</th><th scope="col">Type</th><th scope="col">Dates</th><th scope="col">Reason</th><th scope="col">Review remark</th><th scope="col">Actions</th></tr></thead><tbody>${p.map(l => `<tr><td>${esc(user(l.emp).name)}</td><td>${esc(l.type)}</td><td>${fmtD(l.start)} – ${fmtD(l.end)}</td><td>${esc(l.reason)}</td><td><input id="rm${l.id}" aria-label="Review remark for ${esc(user(l.emp).name)}'s ${esc(l.type)} leave request" placeholder="Required to reject"></td><td><div class="row table-actions"><button class="btn ok" data-act="review" data-id="${l.id}" data-s="approved">Approve</button><button class="btn no" data-act="review" data-id="${l.id}" data-s="rejected">Reject</button></div></td></tr>`).join('')}</tbody></table></div>` : '<p class="empty">No pending requests. All caught up!</p>'}</section>
-    <section class="card"><h2>Review history</h2>${h.length ? `<div class="scroll table-scroll"><table><thead><tr><th scope="col">Employee</th><th scope="col">Type</th><th scope="col">Dates</th><th scope="col">Status</th><th scope="col">Remark</th></tr></thead><tbody>${h.map(l => `<tr><td>${esc(user(l.emp).name)}</td><td>${esc(l.type)}</td><td>${fmtD(l.start)} – ${fmtD(l.end)}</td><td>${badge(l.status)}</td><td class="muted">${esc(l.remarks || '—')}</td></tr>`).join('')}</tbody></table></div>` : '<p class="empty">No reviewed requests yet.</p>'}</section>`;
+    <section class="card"><h2>Pending requests (${p.length})</h2>${p.length ? `<div class="scroll table-scroll"><table><thead><tr><th scope="col">Employee</th><th scope="col">Type</th><th scope="col">Dates and schedule conflicts</th><th scope="col">Reason</th><th scope="col">Review remark</th><th scope="col">Actions</th></tr></thead><tbody>${p.map(l => `<tr><td>${esc(user(l.emp).name)}</td><td>${esc(l.type)}</td><td>${dateCell(l)}</td><td>${esc(l.reason)}</td><td><input id="rm${l.id}" aria-label="Review remark for ${esc(user(l.emp).name)}'s ${esc(l.type)} leave request" placeholder="Required to reject"></td><td><div class="row table-actions"><button class="btn ok" data-act="review" data-id="${l.id}" data-s="approved">Approve</button><button class="btn no" data-act="review" data-id="${l.id}" data-s="rejected">Reject</button></div></td></tr>`).join('')}</tbody></table></div>` : '<p class="empty">No pending requests. All caught up!</p>'}</section>
+    <section class="card"><h2>Review history</h2>${h.length ? `<div class="scroll table-scroll"><table><thead><tr><th scope="col">Employee</th><th scope="col">Type</th><th scope="col">Dates and schedule conflicts</th><th scope="col">Status</th><th scope="col">Remark</th></tr></thead><tbody>${h.map(l => `<tr><td>${esc(user(l.emp).name)}</td><td>${esc(l.type)}</td><td>${dateCell(l)}</td><td>${badge(l.status)}</td><td class="muted">${esc(l.remarks || '—')}</td></tr>`).join('')}</tbody></table></div>` : '<p class="empty">No reviewed requests yet.</p>'}</section>`;
   }
 };
 
@@ -111,19 +148,24 @@ function login(email, pw) {
 
 function assign(emp, date, fromCell) {
   const x = fromCell ? DB.schedules.find(s => s.emp == emp && s.date == date) : null;
+  const selectedDate = date || ymd(new Date());
   const opt = (arr, sel, lab) => arr.map(o => `<option value="${o.id}" ${o.id == sel ? 'selected' : ''}>${esc(lab(o))}</option>`).join('');
-  $('#dlg').innerHTML = `<h2>${x ? 'Edit' : 'Assign'} shift</h2><form data-form="shift" novalidate><input type="hidden" name="id" value="${x ? x.id : ''}">
-    <label for="shift-emp">Employee</label><select id="shift-emp" name="emp" required><option value="">Select an employee</option>${opt(emps(), emp, u => u.name)}</select>
-    <label for="shift-date">Date</label><input id="shift-date" type="date" name="date" value="${date || ''}" required>
-    <label for="shift-type">Shift</label><select id="shift-type" name="shift" required><option value="">Select a shift</option>${opt(DB.shifts, x && x.shift, s => `${s.name} ${s.start}–${s.end}`)}</select>
+  const historical = selectedDate < ymd(new Date());
+  $('#dlg').innerHTML = `<h2 id="dlg-title">${x ? 'Edit shift assignment' : 'Assign a shift'}</h2><form data-form="shift" novalidate aria-labelledby="dlg-title"><input type="hidden" name="id" value="${x ? x.id : ''}">
+    <p id="shift-context" class="dialog-context">${esc(user(emp)?.name || 'Choose an employee')} · ${fmtD(selectedDate)}${historical ? ' · Historical shift: editing is allowed' : ''}${onLeave(emp, selectedDate) ? ' · Approved leave conflict' : ''}</p>
+    <label for="shift-emp">Employee</label><select id="shift-emp" name="emp" required aria-describedby="shift-context shift-error"><option value="">Select an employee</option>${opt(emps(), emp, u => u.name)}</select>
+    <label for="shift-date">Date</label><input id="shift-date" type="date" name="date" value="${selectedDate}" ${x ? '' : `min="${ymd(new Date())}"`} required aria-describedby="shift-context shift-error">
+    <label for="shift-type">Shift</label><select id="shift-type" name="shift" required aria-describedby="shift-error"><option value="">Select a shift</option>${opt(DB.shifts, x && x.shift, s => `${s.name} ${s.start}–${s.end}`)}</select>
     <label for="shift-notes">Notes</label><input id="shift-notes" name="notes" value="${x ? esc(x.notes) : ''}">
-    <div class="row">${x ? `<button type="button" class="btn no" data-act="del" data-id="${x.id}">Delete</button>` : ''}<button type="button" class="btn ghost" data-act="close">Cancel</button><button class="btn">Save</button></div></form>`;
+    <p class="err" id="shift-error" role="alert" aria-live="polite"></p>
+    <div class="dialog-actions">${x ? `<button type="button" class="btn no" data-act="del" data-id="${x.id}">Delete shift</button>` : ''}<span></span><button type="button" class="btn ghost" data-act="close">Cancel</button><button class="btn">Save shift</button></div></form>`;
+  $('#dlg').setAttribute('aria-labelledby', 'dlg-title');
   $('#dlg').showModal();
 }
 
 function types(id) {
   const x = DB.shifts.find(s => s.id == id) || {name:'', start:'09:00', end:'17:00', color:'#2563eb'};
-  $('#dlg').innerHTML = `<h2>Shift types</h2><ul class="list">${DB.shifts.map(s => `<li>${pill(s)}<button class="btn ghost" data-act="etype" data-id="${s.id}" aria-label="Edit ${esc(s.name)} shift type">Edit</button></li>`).join('')}</ul>
+  $('#dlg').innerHTML = `<h2 id="dlg-title">Shift types</h2><ul class="list">${DB.shifts.map(s => `<li>${pill(s)}<button class="btn ghost" data-act="etype" data-id="${s.id}" aria-label="Edit ${esc(s.name)} shift type">Edit</button></li>`).join('')}</ul>
     <form data-form="type" novalidate><h2 style="margin-top:16px">${id ? 'Edit' : 'Add'} shift type</h2><input type="hidden" name="id" value="${id || ''}">
     <label for="type-name">Name</label><input id="type-name" name="name" value="${esc(x.name)}" required><label for="type-start">Start</label><input id="type-start" type="time" name="start" value="${x.start}" required>
     <label for="type-end">End</label><input id="type-end" type="time" name="end" value="${x.end}" required><label for="type-color">Color</label><input id="type-color" type="color" name="color" value="${x.color}">
@@ -145,7 +187,8 @@ document.addEventListener('click', e => {
   else if (a == 'review') {
     const l = DB.leaves.find(x => x.id == d.id), r = $('#rm' + d.id).value.trim();
     if (d.s == 'rejected' && !r) return toast('Please add a remark when rejecting.', 1);
-    l.status = d.s; l.remarks = r; toast('Request ' + d.s + '.'); go(S.view);
+    const conflict = conflictText(scheduleConflicts(l.emp, l.start, l.end));
+    l.status = d.s; l.remarks = r; toast(`Request ${d.s}.${conflict ? ' Scheduling conflict remains: ' + conflict : ''}`); go(S.view);
   }
   else if (a == 'demo') login(d.e, 'demo123');
   else if (a == 'logout') { S.user = null; $('#app').hidden = true; $('#login').hidden = false; }
@@ -163,6 +206,39 @@ document.addEventListener('click', e => {
   }
 });
 
+function updateLeaveDateControls() {
+  const start = $('#ls'), end = $('#le');
+  if (!start || !end) return;
+  const today = ymd(new Date());
+  end.min = start.value || today;
+  const warning = $('#leave-conflicts'), currentError = $('#lerr2');
+  const validRange = validYMD(start.value) && validYMD(end.value) && start.value <= end.value;
+  const conflicts = validRange ? scheduleConflicts(S.user.id, start.value, end.value) : [];
+  warning.textContent = conflicts.length
+    ? `Warning: this request overlaps ${conflictText(conflicts)}. Existing shifts will not be changed automatically.`
+    : '';
+  if (currentError.textContent) currentError.textContent = '';
+}
+
+function updateShiftContext() {
+  const context = $('#shift-context'), emp = $('#shift-emp'), date = $('#shift-date');
+  if (!context || !emp || !date) return;
+  const selected = user(+emp.value), historical = validYMD(date.value) && date.value < ymd(new Date());
+  const details = [selected?.name || 'Choose an employee', validYMD(date.value) ? fmtD(date.value) : 'Choose a valid date'];
+  if (historical) details.push('Historical shift: editing is allowed');
+  if (selected && validYMD(date.value) && onLeave(selected.id, date.value)) details.push('Approved leave conflict');
+  context.textContent = details.join(' · ');
+}
+
+document.addEventListener('input', e => {
+  if (e.target.matches('#ls, #le')) updateLeaveDateControls();
+  if (e.target.matches('#shift-emp, #shift-date')) updateShiftContext();
+});
+document.addEventListener('change', e => {
+  if (e.target.matches('#ls, #le')) updateLeaveDateControls();
+  if (e.target.matches('#shift-emp, #shift-date')) updateShiftContext();
+});
+
 document.addEventListener('submit', e => {
   e.preventDefault();
   const k = e.target.dataset.form; if (!k) return;
@@ -170,15 +246,31 @@ document.addEventListener('submit', e => {
   const nextId = arr => Math.max(0, ...arr.map(x => x.id)) + 1;
   if (k == 'login') login(v.email, v.pw);
   if (k == 'leave') {
-    const er = !v.type ? 'Choose a leave type.' : !v.start || !v.end ? 'Start and end dates are required.' : v.end < v.start ? 'End date cannot be before start date.' : v.reason.trim().length < 5 ? 'Please give a reason (at least 5 characters).' : '';
+    updateLeaveDateControls();
+    const today = ymd(new Date());
+    const activeOverlap = validYMD(v.start) && validYMD(v.end) && DB.leaves.some(l =>
+      l.emp == S.user.id && ['pending', 'approved'].includes(l.status) && l.start <= v.end && l.end >= v.start);
+    const er = !v.type ? 'Choose a leave type.'
+      : !v.start || !v.end ? 'Start and end dates are required.'
+      : !validYMD(v.start) || !validYMD(v.end) ? 'Enter valid calendar dates.'
+      : v.start < today ? 'Start date cannot be in the past.'
+      : v.end < today ? 'End date cannot be in the past.'
+      : v.end < v.start ? 'End date cannot be before start date.'
+      : activeOverlap ? 'This request overlaps an existing pending or approved leave request.'
+      : v.reason.trim().length < 5 ? 'Please give a reason (at least 5 characters).' : '';
     if (er) { $('#lerr2').textContent = er; return toast(er, 1); }
     DB.leaves.push({id:nextId(DB.leaves), emp:S.user.id, type:v.type, start:v.start, end:v.end, reason:v.reason.trim(), status:'pending', remarks:''});
-    toast('Leave request submitted (status: pending).'); go('leave');
+    const conflicts = conflictText(scheduleConflicts(S.user.id, v.start, v.end));
+    toast(`Leave request submitted (status: pending).${conflicts ? ' Scheduling conflict needs review: ' + conflicts : ''}`); go('leave');
   }
   if (k == 'shift') {
-    if (!v.emp || !v.date || !v.shift) return toast('Employee, date, and shift are required.', 1);
-    if (DB.schedules.some(s => s.emp == v.emp && s.date == v.date && s.id != v.id)) return toast('That employee already has a shift on this date. Edit it instead.', 1);
-    if (onLeave(v.emp, v.date)) return toast('Employee is on approved leave that day.', 1);
+    const showError = message => { $('#shift-error').textContent = message; };
+    if (!v.emp || !validYMD(v.date) || !v.shift) return showError('Choose an employee, valid date, and shift.');
+    if (!v.id && v.date < ymd(new Date())) return showError('New shifts cannot be assigned in the past. Existing historical shifts can still be edited.');
+    if (!user(+v.emp) || !shift(+v.shift)) return showError('Choose an available employee and shift.');
+    if (v.id && !DB.schedules.some(s => s.id == v.id)) return showError('This shift no longer exists. Close and refresh the schedule.');
+    if (DB.schedules.some(s => s.emp == v.emp && s.date == v.date && s.id != v.id)) return showError('That employee already has a shift on this date. Edit it instead.');
+    if (onLeave(v.emp, v.date)) return showError('This employee has approved leave on that date. Choose another date.');
     const rec = {emp:+v.emp, shift:+v.shift, date:v.date, notes:v.notes.trim()};
     if (v.id) Object.assign(DB.schedules.find(s => s.id == v.id), rec); else DB.schedules.push({id:nextId(DB.schedules), ...rec});
     $('#dlg').close(); toast('Shift saved.'); go(S.view);
