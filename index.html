@@ -3,23 +3,29 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>ShiftSync</title>
+<meta name="theme-color" content="#f3f6fb">
+<meta name="description" content="ShiftSync workplace shift and leave management demo.">
+<title>ShiftSync — Workplace Scheduling</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+<a class="skip-link btn" href="#view">Skip to content</a>
 <!-- Login screen (demo only) -->
 <div id="login" class="login"><div class="box">
-  <div class="brand">ShiftSync</div>
+  <div class="brand"><span class="brand-mark" aria-hidden="true">S</span>ShiftSync</div>
   <h1>Sign in</h1>
-  <p class="note">Demo prototype: sample data only, not connected to a database. This login is NOT secure authentication.</p>
+  <p class="intro">Workforce scheduling and leave management, in one place.</p>
+  <p class="note">Demo prototype using sample data only. This login is not secure authentication and is not connected to a database.</p>
   <form data-form="login" novalidate>
-    <label for="em">Email</label><input id="em" name="email" type="email" placeholder="ana@shiftsync.demo">
-    <label for="pw">Password</label><input id="pw" name="pw" type="password" placeholder="demo123">
-    <p id="lerr" class="err"></p>
-    <button class="btn" style="width:100%">Sign in</button>
+    <label for="em">Email address</label><input id="em" name="email" type="email" autocomplete="username" placeholder="ana@shiftsync.demo" aria-describedby="lerr">
+    <label for="pw">Password</label>
+    <div class="password-control"><input id="pw" name="pw" type="password" autocomplete="current-password" placeholder="demo123" aria-describedby="lerr">
+      <button class="password-toggle" type="button" data-act="toggle-password" aria-controls="pw" aria-label="Show password" aria-pressed="false">Show</button></div>
+    <p id="lerr" class="err" role="alert" aria-live="polite"></p>
+    <button class="btn full">Sign in</button>
   </form>
-  <p class="muted">Or preview instantly:</p>
-  <div class="row" style="justify-content:flex-start;margin-top:0">
+  <p class="preview">Or preview instantly with a demo account:</p>
+  <div class="demo-actions">
     <button class="btn vio" data-act="demo" data-e="ana@shiftsync.demo">Demo Employee</button>
     <button class="btn ghost" data-act="demo" data-e="admin@shiftsync.demo">Demo Admin</button>
   </div>
@@ -27,20 +33,22 @@
 
 <!-- App shell -->
 <div id="app" hidden>
-  <aside id="side"><div class="brand">ShiftSync</div><nav id="nav"></nav>
-    <p class="muted small">Prototype: sample data, resets on refresh.</p></aside>
+  <aside id="side"><div class="brand"><span class="brand-mark" aria-hidden="true">S</span>ShiftSync</div><nav id="nav" aria-label="Main navigation"></nav>
+    <p class="small">Prototype · sample data resets on refresh.</p></aside>
   <div class="main">
     <header class="top">
-      <button id="menu" class="btn ghost" data-act="menu" aria-label="Menu">☰</button>
-      <span class="badge pending">Demo · sample data</span>
+      <button id="menu" class="btn ghost" data-act="menu" aria-label="Open navigation menu" aria-controls="side" aria-expanded="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+      </button>
+      <span class="badge prototype-badge">Demo · sample data</span>
       <div class="user"><span id="who"></span><button class="btn ghost" data-act="logout">Log out</button></div>
     </header>
-    <main id="view"></main>
+    <main id="view" tabindex="-1"></main>
   </div>
 </div>
 
 <dialog id="dlg"></dialog>
-<div id="toast" role="status"></div>
+<div id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 <script src="./data.js"></script>
 <script src="./app.js"></script>
 </body>
