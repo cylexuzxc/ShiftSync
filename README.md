@@ -38,3 +38,14 @@ This demo login is not secure authentication. Do not use real credentials or sen
 - `data.js` — in-memory demo users, schedules, shifts, and leave requests.
 - `ERD.md` and `schema.sql` — database design documentation for a future backend.
 - `presentation/` — presentation assets.
+
+## Presentation materials
+
+- `presentation/current-interface.png`, `presentation/employee-dashboard.png`, and `presentation/admin-dashboard.png` are non-empty screenshots, but they show an earlier interface and should be recaptured from the current UI before presentation.
+- `presentation/schedule-management.png` and `presentation/leave-management.png` are empty placeholders. Capture the actual screens in a browser before using them; do not treat these files as completed screenshots.
+- `presentation/ShiftSync_ERD.png` is the verified ERD preview; `presentation/ShiftSync_ERD.svg` is the editable vector copy.
+- See `presentation/ShiftSync_Presentation_Checklist.md` for verified status and capture steps.
+
+## Prototype limitations
+
+The app has no server or persistence. Schedule assignments, leave submissions, and review actions modify only in-memory demo data and reset on refresh. Demo credentials are for preview only, not secure authentication. The proposed SQL schema has not been executed against a database.
