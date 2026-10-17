@@ -1,0 +1,17 @@
+{
+  "name": "shiftsync-main",
+  "version": "1.0.0",
+  "description": "ShiftSync is a workplace shift scheduling and leave management prototype. Employees can review their schedules and submit leave requests; administrators can assign shifts and review requests. The prototype uses in-memory sample data and does not connect to PHP or MySQL.",
+  "main": "app.js",
+  "scripts": {
+    "start": "npx http-server . -p 8000 -c-1",
+    "test": "node qa-check.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "http-server": "^14.1.1",
+    "playwright": "^1.64.1"
+  }
+}
