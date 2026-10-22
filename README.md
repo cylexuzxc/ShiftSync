@@ -1,28 +1,29 @@
 # ShiftSync
 
-ShiftSync currently has a browser-only workplace scheduling and leave-management frontend. A separate PHP/MySQL development foundation is being introduced, but dashboard data and authentication are not connected to it.
+ShiftSync is a browser-based workplace scheduling and leave-management prototype with a PHP/MySQL authentication backend. Login credentials and sessions are checked server-side; schedules, leave requests, swaps, time logs, notifications, profiles, and payroll summaries still use in-memory sample data and are not persisted.
 
 ## Run locally
 
-Open `index.html` in a modern browser, or serve this directory:
+For the complete same-origin PHP application and login flow, run the Docker Compose services:
 
 ```sh
-npm install
-npm start
+docker compose up -d --build
 ```
 
-Then visit [http://localhost:8000](http://localhost:8000). Until a later API integration phase, dashboard records and profile edits are held in memory and reset when the page is refreshed.
+Open [http://localhost:8080](http://localhost:8080). The PHP built-in server is for local development only; do not expose it directly as a production web server.
+
+`npm start` on port 8000 remains available for static visual previews, but that separate origin does not serve the PHP authentication endpoints. Use port 8080 for login testing.
 
 ## Demo sign-in
 
-The login screen is shown by default. Use one of these sample accounts with password `demo123`:
+The login screen is shown by default. The server accepts these designated fictional demonstration accounts with password `demo123` only when `DEMO_MODE=true`:
 
 | Role | Email |
 | --- | --- |
 | Employee | `employee@shiftsync.ph` |
 | Administrator | `admin@shiftsync.ph` |
 
-This is **not secure authentication**. The account list and demo password are shipped to the browser, and role checks are only frontend behavior. Do not use real credentials or sensitive data. Unknown emails and incorrect passwords are rejected. Public registration, quick-login bypasses, and role switching are not provided. Real authentication and authorization require the planned PHP/MySQL backend, password hashing, sessions, and server-side checks.
+The accounts are stored in the database with password hashes. Demo account creation and demo-account login require `DEMO_MODE=true`; the seed script refuses production environments and accepts only the dedicated development or demonstration database names. Do not use real employee information or point the public demo at a workplace database. The login page's existing warning still says “Frontend demo only”; it was intentionally left unchanged to preserve its approved appearance and needs approval for a future text-only correction.
 
 ## Implemented prototype workflows
 
@@ -54,7 +55,7 @@ Run `npm test` to execute the Playwright browser checks. The test suite exercise
 
 The backend foundation uses Docker Compose because this Codespaces image has Docker but does not include the PHP MySQL PDO extension or a MySQL server. The database stores data in the persistent `shiftsync_mysql_data` volume and does not publish port 3306. In this Codespaces environment, the PHP container shares the database container's private network namespace; only the PHP HTTP port is bound to `127.0.0.1:8080`. The PHP service includes `pdo_mysql` and serves only the generic database health endpoint; the frontend is not connected to it yet. The development database user has schema-level privileges only on `shiftsync_dev` so it can run the initializer; production should use separate, least-privilege runtime and migration accounts.
 
-1. Copy `.env.example` to `.env` and replace both password placeholders with different, randomly generated development-only passwords. Do not commit `.env`.
+1. Ensure the ignored local `.env` contains database credentials matching the already-initialized MySQL accounts, plus `APP_ENV=development` and `DEMO_MODE=true`. Use distinct random values for the database user and MySQL root account. Do not commit credentials or expose them in shared files. If MySQL returns access denied, restore the existing database account credentials or provision a separate fresh development database; do not delete the persistent volume to reset credentials.
 2. Build and start the services:
 
    ```sh
@@ -73,4 +74,20 @@ The backend foundation uses Docker Compose because this Codespaces image has Doc
 
 The migration refuses to initialize a database containing untracked application tables. It does not drop, truncate, or migrate existing data. Do not delete the named volume to reset the database. The host PHP installation does not have `pdo_mysql`; run backend PHP commands through the Compose `app` service. Keep the frontend running separately with `npm start` on port 8000.
 
-Phase 1 provides only environment-based PDO configuration, a guarded fresh-schema initializer, a connection check, table verification, and a health endpoint. It does **not** implement login, sessions, authorization middleware, or feature APIs.
+5. Seed or verify the two fictional accounts only in the development demo database:
+
+   ```sh
+   docker compose exec -e DEMO_MODE=true -e DEMO_PASSWORD=demo123 app php bin/seed-demo.php
+   ```
+
+   This command is idempotent for the two designated demo records. It refuses conflicting/inactive records, production mode, and databases outside the configured development/demo database names. It updates a password hash only when the matching marked demo account exists and the current hash does not match the supplied demo password.
+
+For a public academic demo, use a separate database named `shiftsync_demo` containing only fictional records, configure `APP_ENV=demo`, `DB_NAME=shiftsync_demo`, and `DEMO_MODE=true`, and set `SESSION_COOKIE_SECURE=true` behind HTTPS. Use a dedicated database account scoped to that database, terminate HTTPS at a maintained production web server, and keep database ports private. Do not use this development Compose server as a public production deployment. To reset demo data, provision a fresh isolated demo database and run the guarded migration and seed commands against it; do not drop tables or delete the persistent development volume.
+
+Authentication endpoints:
+
+- `POST /api/login.php` — verifies the active account and password hash, rotates the session ID, and returns safe profile fields plus the CSRF token.
+- `GET /api/session.php` — validates the current active database account and returns the current session (or no user) with a CSRF token.
+- `POST /api/logout.php` — checks the CSRF token, destroys the server session, and expires its cookie.
+
+Session cookies are HttpOnly and SameSite=Lax, with a 30-minute idle timeout. The Secure flag follows HTTPS by default; set `SESSION_COOKIE_SECURE=true` when TLS is terminated by a reverse proxy that does not expose HTTPS to PHP. The UI receives the authenticated role from the server session. There are no business-operation APIs yet, so dashboard role checks are still presentation behavior—not server authorization for schedules, leave, swaps, payroll, or other data. All dashboard edits remain in-memory and reset on reload.

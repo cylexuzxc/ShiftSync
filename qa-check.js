@@ -12,6 +12,7 @@ const dateAfter = days => {
 };
 const errors = [];
 const browserErrors = [];
+let expectedCsrfConsoleErrors = 0;
 let browser;
 let server;
 
@@ -25,29 +26,156 @@ let server;
   browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 1366, height: 900 } });
   page.on('console', message => {
-    if (message.type() === 'error') browserErrors.push(message.text());
+    if (message.type() !== 'error') return;
+    if (message.text().includes('status of 401 (Unauthorized)')) return;
+    if (message.text().includes('status of 403 (Forbidden)') && expectedCsrfConsoleErrors > 0) {
+      expectedCsrfConsoleErrors -= 1;
+      return;
+    }
+    browserErrors.push(message.text());
   });
   page.on('pageerror', error => errors.push(error.message));
 
+  let sessionUser = null;
+  let csrfToken = 'qa-csrf-initial';
+  let sessionVersion = 0;
+  let forceCsrfRefresh = true;
+  await page.route('**/api/*.php', async route => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    const headers = request.headers();
+    const json = body => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ success: true, data: body })
+    });
+
+    if (path === '/api/session.php' && request.method() === 'GET') {
+      await json({ user: sessionUser, csrfToken });
+      return;
+    }
+    if (headers['x-csrf-token'] !== csrfToken) {
+      await route.fulfill({
+        status: 403,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: false, error: 'csrf_validation_failed' })
+      });
+      return;
+    }
+    if (path === '/api/login.php' && request.method() === 'POST') {
+      const credentials = request.postDataJSON();
+      if (credentials.email === 'employee@shiftsync.ph' && forceCsrfRefresh) {
+        forceCsrfRefresh = false;
+        csrfToken = 'qa-csrf-refreshed';
+        expectedCsrfConsoleErrors += 1;
+        await route.fulfill({
+          status: 403,
+          contentType: 'application/json',
+          body: JSON.stringify({ success: false, error: 'csrf_validation_failed' })
+        });
+        return;
+      }
+      const fixtures = {
+        'employee@shiftsync.ph': {
+          id: 2,
+          name: 'Juan Dela Cruz',
+          email: 'employee@shiftsync.ph',
+          role: 'employee',
+          title: 'Senior Software Engineer',
+          department: 'Engineering',
+          photo: ''
+        },
+        'admin@shiftsync.ph': {
+          id: 1,
+          name: 'Maria Santos',
+          email: 'admin@shiftsync.ph',
+          role: 'admin',
+          title: 'HR & Operations Director',
+          department: 'Management',
+          photo: ''
+        }
+      };
+      const user = fixtures[credentials.email];
+      if (!user || credentials.email === 'inactive@shiftsync.ph' || credentials.password !== 'demo123') {
+        await route.fulfill({
+          status: 401,
+          contentType: 'application/json',
+          body: JSON.stringify({ success: false, error: 'invalid_credentials' })
+        });
+        return;
+      }
+      sessionUser = user;
+      sessionVersion += 1;
+      csrfToken = `qa-csrf-${sessionVersion}`;
+      await json({ user, csrfToken });
+      return;
+    }
+    if (path === '/api/logout.php' && request.method() === 'POST') {
+      sessionUser = null;
+      sessionVersion += 1;
+      csrfToken = `qa-csrf-${sessionVersion}`;
+      await json({ loggedOut: true });
+      return;
+    }
+    await route.fulfill({ status: 404, body: 'Not found' });
+  });
+
   await page.goto(`http://127.0.0.1:${port}`, { waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => document.querySelector('#auth-form'));
   const authForm = page.locator('#auth-form');
   assert(await authForm.isVisible(), 'The candidate-designed login screen should be the default.');
+  assert(await page.getByRole('heading', { name: 'ShiftSync Enterprise' }).count() === 1, 'Login branding should remain unchanged.');
+  assert(await page.getByRole('button', { name: 'Sign In' }).count() === 1, 'The existing Sign In button should remain unchanged.');
+  assert(await page.locator('#auth-form').evaluate(form => form.parentElement.classList.contains('max-w-lg') && form.parentElement.classList.contains('rounded-3xl') && form.parentElement.classList.contains('p-8')), 'The centered login card layout should remain unchanged.');
+  assert(await page.locator('#app .bg-brand-600 .fa-calendar-check').count() === 1, 'The existing green calendar branding icon should remain unchanged.');
+  assert((await page.locator('#auth-error').getAttribute('role')) === 'alert', 'Login errors should remain accessible.');
+  assert((await page.locator('body').innerText()).includes('Frontend demo only'), 'The existing demo warning wording should remain unchanged.');
+  assert((await page.locator('body').innerText()).includes('Demo password: demo123'), 'The displayed demo password should remain unchanged.');
+  assert((await page.locator('body').innerText()).includes('Administrator: admin@shiftsync.ph'), 'The administrator demo email should remain visible.');
   assert(await page.locator('#quick-admin, #quick-emp, #toggle-mode, #reg-role').count() === 0, 'Login bypass and public registration controls must not exist.');
   assert(await page.locator('[id^="role-switch"]').count() === 0, 'Public role-switch controls must not exist.');
 
   await page.locator('#auth-email').fill('unknown@example.com');
   await page.locator('#auth-password').fill('demo123');
   await authForm.locator('button[type="submit"]').click();
+  await page.waitForFunction(() => document.querySelector('#auth-error')?.textContent.includes('Invalid demo credentials'));
   assert((await page.locator('#auth-error').textContent()).includes('Invalid demo credentials'), 'Unknown emails must be rejected.');
+  await page.locator('#auth-email').fill('inactive@shiftsync.ph');
+  await page.locator('#auth-password').fill('demo123');
+  await authForm.locator('button[type="submit"]').click();
+  await page.waitForFunction(() => document.querySelector('#auth-error')?.textContent.includes('Invalid demo credentials'));
+  assert((await page.locator('#auth-error').textContent()).includes('Invalid demo credentials'), 'Inactive accounts must be rejected.');
   await page.locator('#auth-email').fill('admin@shiftsync.ph');
   await page.locator('#auth-password').fill('wrong-password');
   await authForm.locator('button[type="submit"]').click();
+  await page.waitForFunction(() => document.querySelector('#auth-error')?.textContent.includes('Invalid demo credentials'));
   assert((await page.locator('#auth-error').textContent()).includes('Invalid demo credentials'), 'Incorrect passwords must be rejected.');
 
   await page.locator('#auth-email').fill('employee@shiftsync.ph');
   await page.locator('#auth-password').fill('demo123');
   await authForm.locator('button[type="submit"]').click();
-  assert(await page.locator('aside').isVisible(), 'Employee app shell should load after valid demo credentials.');
+  await page.waitForFunction(() =>
+    document.querySelector('aside') ||
+    (
+      document.querySelector('#auth-error') &&
+      !document.querySelector('#auth-error').textContent.includes('Signing in')
+    )
+  );
+  assert(
+    await page.locator('aside').isVisible(),
+    `Employee app shell should load after valid demo credentials: ${await page.locator('#auth-error').textContent().catch(() => 'no login error element')}`
+  );
+  assert(await page.getByRole('button', { name: 'Labor & Payroll' }).count() === 0, 'Employee session should not expose the administrator analytics navigation.');
+  await page.reload();
+  await page.waitForFunction(() =>
+    document.querySelector('aside') ||
+    document.querySelector('#auth-error:not(.hidden)')
+  );
+  assert(
+    await page.locator('aside').isVisible(),
+    `A valid session should be restored after browser reload: ${await page.locator('#auth-error').textContent().catch(() => 'no login error element')}`
+  );
+  assert(sessionUser?.role === 'employee', 'A valid session should be restored after browser reload.');
   assert(await page.getByText('Live Time Tracker').count() > 0, 'Candidate dashboard must include its live time tracker.');
   assert(await page.getByText('Upcoming Shifts Roster').count() > 0, 'Candidate dashboard must include its upcoming-shifts card.');
   assert(await page.locator('.bg-gradient-to-r.from-brand-700').count() === 1, 'Candidate green enterprise welcome banner should be rendered.');
@@ -130,9 +258,12 @@ let server;
   await page.getByRole('button', { name: 'Toggle light and dark theme' }).click();
 
   await page.locator('#logout-btn').click();
+  await page.locator('#auth-form').waitFor();
+  assert(sessionUser === null, 'Logout should invalidate the server session.');
   await page.locator('#auth-email').fill('admin@shiftsync.ph');
   await page.locator('#auth-password').fill('demo123');
   await page.locator('#auth-form button[type="submit"]').click();
+  await page.getByRole('button', { name: 'Labor & Payroll' }).waitFor();
   assert(await page.getByRole('button', { name: 'Labor & Payroll' }).count() === 1, 'Administrator account should expose labor analytics.');
 
   await page.getByRole('button', { name: 'Shift Roster' }).click();

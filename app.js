@@ -1,3 +1,81 @@
+let authCsrfToken = null;
+let authReadyPromise = null;
+
+async function readAuthResponse(response) {
+    try {
+        return await response.json();
+    } catch {
+        throw new Error('Invalid authentication response.');
+    }
+}
+
+function mapAuthenticatedUser(account) {
+    const sample = State.users.find(user => user.email.toLowerCase() === account.email.toLowerCase());
+    return {
+        ...(sample || {
+            title: '',
+            department: '',
+            bio: '',
+            phone: '',
+            location: '',
+            rate: 0,
+            photo: ''
+        }),
+        id: account.id,
+        name: account.name,
+        email: account.email,
+        role: account.role,
+        title: account.title || sample?.title || '',
+        department: account.department || sample?.department || '',
+        bio: account.bio || sample?.bio || '',
+        phone: account.phone || sample?.phone || '',
+        location: account.location || sample?.location || '',
+        photo: account.photo || sample?.photo || ''
+    };
+}
+
+async function restoreAuthenticatedSession(showError = true) {
+    try {
+        const response = await fetch('/api/session.php', {
+            method: 'GET',
+            credentials: 'same-origin',
+            headers: { Accept: 'application/json' }
+        });
+        const payload = await readAuthResponse(response);
+        if (!response.ok || payload.success !== true || typeof payload.data?.csrfToken !== 'string') {
+            throw new Error('Authentication service unavailable.');
+        }
+        authCsrfToken = payload.data.csrfToken;
+        State.currentUser = payload.data.user ? mapAuthenticatedUser(payload.data.user) : null;
+        if (State.currentUser) render();
+        return true;
+    } catch {
+        authCsrfToken = null;
+        State.currentUser = null;
+        if (showError) {
+            const error = document.getElementById('auth-error');
+            if (error) {
+                error.textContent = 'Authentication service unavailable. Please try again later.';
+                error.classList.remove('hidden');
+            }
+        }
+        return false;
+    }
+}
+
+async function fetchWithCsrfRefresh(url, options) {
+    let response = await fetch(url, options);
+    if (response.status !== 403) return response;
+
+    await restoreAuthenticatedSession(false);
+    if (!authCsrfToken) throw new Error('Authentication token is unavailable.');
+    response = await fetch(url, {
+        ...options,
+        headers: { ...options.headers, 'X-CSRF-Token': authCsrfToken }
+    });
+    return response;
+}
+
 function showToast(message, type = 'success') {
             const container = document.getElementById('toast-container');
             if (!container) return;
@@ -414,22 +492,74 @@ function showToast(message, type = 'success') {
                     </p>
                 `;
 
-            container.querySelector('#auth-form').onsubmit = (event) => {
+            container.querySelector('#auth-form').onsubmit = async (event) => {
                 event.preventDefault();
                 const email = container.querySelector('#auth-email').value.trim().toLowerCase();
                 const password = container.querySelector('#auth-password').value;
                 const error = container.querySelector('#auth-error');
-                const user = State.users.find(account => account.email.toLowerCase() === email);
+                const form = event.currentTarget;
+                const submitButton = form.querySelector('button[type="submit"]');
+                const inputs = form.querySelectorAll('input');
+                if (form.dataset.submitting === 'true') return;
 
-                if (!user || password !== 'demo123') {
-                    error.textContent = 'Invalid demo credentials. Check the email and password and try again.';
+                form.dataset.submitting = 'true';
+                form.setAttribute('aria-busy', 'true');
+                submitButton.disabled = true;
+                submitButton.setAttribute('aria-busy', 'true');
+                inputs.forEach(input => { input.disabled = true; });
+                error.textContent = 'Signing in...';
+                error.classList.remove('hidden');
+
+                try {
+                    if (!authCsrfToken) {
+                        if (authReadyPromise) await authReadyPromise;
+                    }
+                    if (!authCsrfToken) {
+                        await restoreAuthenticatedSession(false);
+                    }
+                    if (!authCsrfToken) throw new Error('Authentication service unavailable.');
+
+                    const response = await fetchWithCsrfRefresh('/api/login.php', {
+                        method: 'POST',
+                        credentials: 'same-origin',
+                        headers: {
+                            Accept: 'application/json',
+                            'Content-Type': 'application/json',
+                            'X-CSRF-Token': authCsrfToken
+                        },
+                        body: JSON.stringify({ email, password })
+                    });
+                    const payload = await readAuthResponse(response);
+                    if (response.status === 401) {
+                        error.textContent = 'Invalid demo credentials. Check the email and password and try again.';
+                        return;
+                    }
+                    if (
+                        !response.ok ||
+                        payload.success !== true ||
+                        !payload.data?.user ||
+                        !['admin', 'employee'].includes(payload.data.user.role) ||
+                        typeof payload.data.csrfToken !== 'string'
+                    ) {
+                        throw new Error('Authentication service unavailable.');
+                    }
+
+                    authCsrfToken = payload.data.csrfToken;
+                    State.currentUser = mapAuthenticatedUser(payload.data.user);
+                    showToast(`Welcome back, ${State.currentUser.name}`);
+                    render();
+                } catch {
+                    error.textContent = 'Authentication service unavailable. Please try again later.';
                     error.classList.remove('hidden');
-                    return;
+                } finally {
+                    if (form.isConnected) {
+                        delete form.dataset.submitting;
+                        form.removeAttribute('aria-busy');
+                        submitButton.disabled = false;
+                        submitButton.removeAttribute('aria-busy');
+                        inputs.forEach(input => { input.disabled = false; });
+                    }
                 }
-
-                State.currentUser = user;
-                showToast(`Welcome back, ${user.name}`);
-                render();
             };
 
             wrapper.appendChild(container);
@@ -570,10 +700,30 @@ function showToast(message, type = 'success') {
 
                 const logoutBtn = header.querySelector('#logout-btn');
 
-                if (logoutBtn) logoutBtn.onclick = () => {
-                    if (State.timeClock.isClockedIn) toggleClockIn();
-                    State.currentUser = null;
-                    render();
+                if (logoutBtn) logoutBtn.onclick = async () => {
+                    logoutBtn.disabled = true;
+                    try {
+                        if (!authCsrfToken) throw new Error('Logout token is unavailable.');
+                        const response = await fetchWithCsrfRefresh('/api/logout.php', {
+                            method: 'POST',
+                            credentials: 'same-origin',
+                            headers: {
+                                Accept: 'application/json',
+                                'X-CSRF-Token': authCsrfToken
+                            }
+                        });
+                        const payload = await readAuthResponse(response);
+                        if (!response.ok || payload.success !== true) {
+                            throw new Error('Logout failed.');
+                        }
+                    } catch {
+                        showToast('Could not confirm server sign-out. Please try again.', 'error');
+                    } finally {
+                        if (State.timeClock.isClockedIn) toggleClockIn();
+                        authCsrfToken = null;
+                        State.currentUser = null;
+                        render();
+                    }
                 };
             }, 0);
 
@@ -1305,3 +1455,4 @@ function showToast(message, type = 'success') {
         }
 
 render();
+authReadyPromise = restoreAuthenticatedSession();

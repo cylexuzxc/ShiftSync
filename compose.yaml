@@ -29,13 +29,16 @@ services:
       DB_NAME: ${DB_NAME:?Set DB_NAME in .env}
       DB_USER: ${DB_USER:?Set DB_USER in .env}
       DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
+      APP_ENV: ${APP_ENV:-development}
+      DEMO_MODE: ${DEMO_MODE:-false}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-}
     depends_on:
       db:
         condition: service_healthy
     network_mode: "service:db"
     volumes:
       - .:/var/www/html
-    command: ["php", "-S", "0.0.0.0:8080", "-t", "public"]
+    command: ["php", "-S", "0.0.0.0:8080", "-t", "public", "public/router.php"]
 
 volumes:
   shiftsync_mysql_data:
