@@ -1,169 +1,140 @@
-# ShiftSync Database Design (MySQL)
+# ShiftSync Database Design
 
-Four tables cover everything the current prototype stores: **users**, **shifts**, **schedules**, **leave_requests**.
-The design is normalized (3NF): each fact is stored once, and tables link through foreign keys.
-`schema.sql` is the matching implementation (MySQL 8.0.16+ / MariaDB 10.2+).
+The development schema supports the current dashboard's users, employee profiles, shift types and assignments, leave decisions, shift swaps, time-clock records, notifications, and protected compensation data. It is a foundation only; the frontend is not connected to these tables yet.
 
-## ER Diagram
+`schema.sql` is the non-destructive initial schema used by `bin/migrate.php`. It does not create or select a database and does not drop or alter tables. The initializer applies it only to a fresh database and refuses to initialize a database containing untracked application tables. Do not execute it directly against an existing database.
+
+## ER diagram
 
 ```mermaid
 erDiagram
-    USERS ||--o{ SCHEDULES : "works (employee_id)"
-    USERS |o--o{ SCHEDULES : "assigns (assigned_by)"
-    SHIFTS ||--o{ SCHEDULES : "is used by"
-    USERS ||--o{ LEAVE_REQUESTS : "submits (employee_id)"
-    USERS |o--o{ LEAVE_REQUESTS : "reviews (reviewed_by)"
-    USERS |o--o{ SHIFTS : "creates (created_by)"
+    USERS ||--o{ SCHEDULES : employee
+    USERS o|--o{ SCHEDULES : assigns
+    SHIFTS ||--o{ SCHEDULES : shift_type
+    USERS ||--o{ LEAVE_REQUESTS : submits
+    USERS o|--o{ LEAVE_REQUESTS : reviews
+    SCHEDULES ||--o{ SHIFT_SWAP_REQUESTS : requested_shift
+    USERS ||--o{ SHIFT_SWAP_REQUESTS : requester
+    USERS ||--o{ SHIFT_SWAP_REQUESTS : target
+    USERS o|--o{ SHIFT_SWAP_REQUESTS : reviews
+    USERS ||--o{ TIME_ENTRIES : clocks
+    SCHEDULES o|--o{ TIME_ENTRIES : scheduled_for
+    USERS ||--o{ NOTIFICATIONS : receives
+    USERS ||--o{ EMPLOYEE_PAY_RATES : compensation
+    USERS o|--o{ EMPLOYEE_PAY_RATES : sets
 
     USERS {
         int user_id PK
         varchar employee_no UK
-        varchar first_name
-        varchar last_name
         varchar email UK
         varchar password_hash
-        enum role "admin | employee"
+        enum role
+        varchar first_name
+        varchar last_name
         varchar department
-        enum status "active | inactive"
-        datetime created_at
+        varchar job_title
+        varchar phone
+        varchar location
+        varchar bio
+        varchar photo_url
+        enum status
     }
     SHIFTS {
         int shift_id PK
         varchar shift_name UK
         time start_time
         time end_time
-        char color "#RRGGBB"
-        int created_by FK "nullable"
-        datetime created_at
+        char color
+        int created_by FK
     }
     SCHEDULES {
         int schedule_id PK
-        int employee_id FK "unique with work_date"
+        int employee_id FK
         int shift_id FK
         date work_date
-        int assigned_by FK "nullable"
-        varchar notes
-        datetime created_at
+        enum status
+        varchar assigned_role
+        varchar location
+        int assigned_by FK
     }
     LEAVE_REQUESTS {
         int leave_request_id PK
         int employee_id FK
-        enum leave_type "Vacation | Sick | Personal | Emergency"
+        varchar leave_type
         date start_date
         date end_date
-        varchar reason
-        enum status "pending | approved | rejected"
-        int reviewed_by FK "nullable"
-        datetime reviewed_at "nullable"
-        varchar admin_remarks "nullable"
-        datetime created_at
+        enum status
+        int reviewed_by FK
+        datetime reviewed_at
+    }
+    SHIFT_SWAP_REQUESTS {
+        int swap_request_id PK
+        int schedule_id FK
+        int requester_id FK
+        int target_user_id FK
+        enum status
+        int reviewed_by FK
+    }
+    TIME_ENTRIES {
+        int time_entry_id PK
+        int employee_id FK
+        int schedule_id FK
+        datetime clock_in_at
+        datetime clock_out_at
+    }
+    NOTIFICATIONS {
+        int notification_id PK
+        int user_id FK
+        varchar title
+        varchar message
+        datetime read_at
+    }
+    EMPLOYEE_PAY_RATES {
+        int pay_rate_id PK
+        int employee_id FK
+        decimal hourly_rate
+        date effective_from
+        date effective_to
+        int created_by FK
     }
 ```
 
-## Tables
+## Tables and constraints
 
-### users: administrators and employees
-One table, split by `role`, so a single login system serves both.
-
-| Column | Type | Constraints |
+| Table | Purpose | Important constraints and indexes |
 |---|---|---|
-| user_id | INT UNSIGNED | **PK**, auto-increment |
-| employee_no | VARCHAR(30) | NOT NULL, **UNIQUE** (e.g. E101) |
-| first_name, last_name | VARCHAR(80) | NOT NULL |
-| email | VARCHAR(190) | NOT NULL, **UNIQUE** (login name; case-insensitive collation) |
-| password_hash | VARCHAR(255) | NOT NULL; PHP `password_hash()` output, never plaintext |
-| role | ENUM('admin','employee') | NOT NULL, default employee |
-| department | VARCHAR(100) | NULL |
-| status | ENUM('active','inactive') | NOT NULL, default active |
-| created_at | DATETIME | NOT NULL, default now |
+| `users` | Employee/admin identity and contact/profile data, including photo URL | Unique employee number and email; role/status index; `password_hash` stores a PHP password hash, never plaintext |
+| `shifts` | Reusable named shift types, including start/end times | Unique shift name; creator references `users`; valid time range and color |
+| `schedules` | Employee assignment of a shift type to a work date, with assigned role and location | Unique `(employee_id, work_date)`; foreign keys to employee, shift type, and assigning admin; date and shift indexes |
+| `leave_requests` | Leave submissions and review decisions | Date range check; status/reviewer/timestamp; employee/status and review-date indexes |
+| `shift_swap_requests` | Requested transfer of a scheduled shift to a coworker | References schedule, requester, target, and reviewer; requester/target distinctness is checked by the application; status queue indexes |
+| `time_entries` | Clock-in/out sessions, including open sessions | UTC timestamps; optional scheduled shift; generated unique key permits at most one open entry per employee |
+| `notifications` | Per-user notification content and read state | User foreign key; user/read/date index |
+| `employee_pay_rates` | Effective-dated hourly compensation, separate from general profile access | Positive decimal rate; employee/effective-date uniqueness and index; creator foreign key |
+| `schema_migrations` | Applied migration versions | Created and written by the guarded initializer |
 
-Index: `(role, status)` for employee lists and counts.
+The application must enforce non-overlapping effective pay-rate ranges, employee/admin access checks, leave overlap rules, availability before assigning/approving a shift, swap authorization, and accurate time-clock ownership. MySQL constraints alone cannot enforce those business rules.
 
-### shifts: reusable shift types
-| Column | Type | Constraints |
-|---|---|---|
-| shift_id | INT UNSIGNED | **PK** |
-| shift_name | VARCHAR(80) | NOT NULL, **UNIQUE** |
-| start_time, end_time | TIME | NOT NULL; `start <> end` (CHECK). End earlier than start means an overnight shift |
-| color | CHAR(7) | NOT NULL, CHECK `#RRGGBB` |
-| created_by | INT UNSIGNED | **FK** → users.user_id, NULL, ON DELETE SET NULL |
-| created_at | DATETIME | NOT NULL |
+## Changes from the original four-table design
 
-### schedules: who works which shift on which date
-| Column | Type | Constraints |
-|---|---|---|
-| schedule_id | INT UNSIGNED | **PK** |
-| employee_id | INT UNSIGNED | NOT NULL, **FK** → users.user_id, ON DELETE RESTRICT |
-| shift_id | INT UNSIGNED | NOT NULL, **FK** → shifts.shift_id, ON DELETE RESTRICT |
-| work_date | DATE | NOT NULL |
-| assigned_by | INT UNSIGNED | **FK** → users.user_id, NULL, ON DELETE SET NULL |
-| notes | VARCHAR(255) | NULL |
-| created_at | DATETIME | NOT NULL |
+- Preserved the existing `users`, `shifts`, `schedules`, and `leave_requests` concepts and their foreign-key relationships.
+- Added employee profile fields (`job_title`, `phone`, `location`, `bio`) to `users`.
+- Added the profile `photo_url` used by the current account and team views.
+- Added schedule status to represent pending/confirmed/cancelled assignments.
+- Added per-assignment `assigned_role` and `location` fields used by the shift roster.
+- Made leave type a bounded `VARCHAR` so the current form's additional types fit without silent enum rejection; retained status, review, remark, and date fields.
+- Added `shift_swap_requests` to persist the schedule being transferred, both employees, request reason, decision, and reviewer.
+- Added `time_entries` for clock sessions rather than storing display-formatted times and durations.
+- Added `notifications` with per-user read timestamps.
+- Added `employee_pay_rates` separately from ordinary profile data; APIs must restrict this data and payroll summaries to administrators.
+- Added migration `002_dashboard_profile_schedule_fields` to extend an already initialized Phase 1 development database without recreating tables or deleting rows.
+- Payroll totals are derived from scheduled shifts or time entries and effective rates. No stored payroll-summary table is introduced in this phase.
 
-Constraint: **UNIQUE (employee_id, work_date)**, so an employee has at most one shift per day (the prototype enforces the same rule).
-Indexes: `(work_date)` for today's shifts and the weekly grid; `(shift_id, work_date)`, which also serves the `shift_id` foreign key.
+The former `schema.sql` began with `DROP TABLE` statements. This has been replaced with a non-destructive fresh-database baseline. The initializer does not migrate or modify the old schema: it stops if application tables already exist without a recorded foundation migration. Review and plan a separate data-preserving migration before using an existing database.
 
-### leave_requests: employee requests and admin decisions
-| Column | Type | Constraints |
-|---|---|---|
-| leave_request_id | INT UNSIGNED | **PK** |
-| employee_id | INT UNSIGNED | NOT NULL, **FK** → users.user_id, ON DELETE RESTRICT |
-| leave_type | ENUM('Vacation','Sick','Personal','Emergency') | NOT NULL (same values as the form) |
-| start_date, end_date | DATE | NOT NULL, CHECK `end_date >= start_date` |
-| reason | VARCHAR(500) | NOT NULL |
-| status | ENUM('pending','approved','rejected') | NOT NULL, default pending |
-| reviewed_by | INT UNSIGNED | **FK** → users.user_id, NULL, ON DELETE SET NULL |
-| reviewed_at | DATETIME | NULL; CHECK: set when status is not pending, empty while pending |
-| admin_remarks | VARCHAR(500) | NULL |
-| created_at | DATETIME | NOT NULL |
+## Security and scope
 
-Indexes: `(employee_id, status)` for "my requests"; `(status, start_date, end_date)` for the pending queue and overlap checks.
-
-## Relationships
-
-| # | Relationship | Cardinality | Foreign key | Meaning |
-|---|---|---|---|---|
-| 1 | users → schedules | one-to-many | schedules.employee_id | One employee can have many schedules; each schedule has exactly one employee |
-| 2 | shifts → schedules | one-to-many | schedules.shift_id | One shift type is used by many schedules; each schedule uses exactly one shift |
-| 3 | users → schedules (admin) | one-to-many, optional | schedules.assigned_by | One admin can assign many schedules; the value is NULL if the admin account is later removed |
-| 4 | users → leave_requests | one-to-many | leave_requests.employee_id | One employee can submit many leave requests; each request belongs to one employee |
-| 5 | users → leave_requests (admin) | one-to-many, optional | leave_requests.reviewed_by | One admin can review many requests; NULL while pending |
-| 6 | users → shifts | one-to-many, optional | shifts.created_by | An admin can create many shift types |
-
-Relationships 1, 3, 4, 5 and 6 all point at `users`, so one account table covers both roles. Which role may do what (only admins assign or review) is enforced by the backend.
-
-## How the app maps to the database
-
-| Prototype (data.js) | Database column | Note |
-|---|---|---|
-| `name` | first_name + last_name | Split on the backend |
-| `no`, `dept` | employee_no, department | |
-| `role` | role | |
-| `start` / `end` ("07:00") | start_time / end_time | MySQL returns "07:00:00"; trim for display |
-| `emp`, `shift`, `date`, `notes` | employee_id, shift_id, work_date, notes | Empty notes can be stored as NULL |
-| `type`, `start`, `end`, `reason`, `status` | leave_type, start_date, end_date, reason, status | Values identical |
-| `remarks` | admin_remarks | |
-| not tracked in the app | assigned_by, reviewed_by, reviewed_at, created_at | Backend fills these from the logged-in admin |
-
-## Gap review
-
-Nothing is missing for the current features, so **no extra tables were added**.
-Deliberately not added (not needed by any current screen): a separate `roles` or `departments` table, leave balances, a cancelled status, an audit log.
-
-## Rules the database enforces vs. rules the backend must enforce
-
-**Database:** unique email, employee number and shift name; one shift per employee per day; valid leave type and status; leave end not before start; shift start differs from end; valid color; consistent review timestamp; no deleting a user or shift that is still referenced (deactivate users with `status` instead).
-
-**Backend (cannot be a simple constraint):**
-- Only admins may assign shifts or review leave; set `assigned_by`, `reviewed_by` and `reviewed_at` from the session.
-- Reject a leave request that overlaps another request of the same employee.
-- Do not assign a shift on a day of approved leave, and decide what happens to existing shifts when leave is approved.
-- Require a remark when rejecting (the prototype already does).
-- Hash passwords with `password_hash()` and check with `password_verify()`.
-
-## Viewing and exporting the diagram
-
-- **GitHub / GitLab:** this file renders the diagram automatically.
-- **VS Code:** install "Markdown Preview Mermaid Support", then open the Markdown preview.
-- **Mermaid Live Editor (https://mermaid.live):** paste the code block, then use *Actions → PNG / SVG* to export for your report or slides.
-- **CLI:** `npx @mermaid-js/mermaid-cli -i diagram.mmd -o erd.png` (put only the code between the fences in `diagram.mmd`).
+- No public account registration or self-selected administrator role is introduced.
+- Real authentication is not implemented in this phase. Future authentication must use `password_hash()` / `password_verify()`, secure server-side sessions, and role authorization on every protected operation.
+- Hourly rates are sensitive. Keep them out of employee-facing queries and exports; enforce administrator authorization in the server/API layer.
+- Database credentials are read from environment variables and must never be committed.

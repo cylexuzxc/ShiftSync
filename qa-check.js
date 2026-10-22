@@ -1,143 +1,215 @@
-const fs = require('fs');
+const fs = require('node:fs/promises');
 const { chromium } = require('playwright');
+const httpServer = require('http-server');
 
 const assert = (condition, message) => {
   if (!condition) throw new Error(message);
 };
-
-const fmt = d => d.toISOString().slice(0, 10);
-const pngHeader = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-
-const validatePng = filePath => {
-  const buffer = fs.readFileSync(filePath);
-  assert(buffer.length > 20000, `${filePath} is too small to be a valid screenshot.`);
-  assert(buffer.subarray(0, 8).equals(pngHeader), `${filePath} is not a valid PNG file.`);
-  return buffer.length;
+const dateAfter = days => {
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 };
-
-const waitForToastToClear = async (page, timeout = 7000) => {
-  await page.waitForFunction(() => {
-    const toast = document.querySelector('#toast');
-    return !toast || (!toast.textContent.trim() && !toast.classList.contains('show'));
-  }, { timeout });
-};
-
-const waitForToastText = async (page, expectedText, timeout = 7000) => {
-  await page.waitForFunction(({ text }) => {
-    const toast = document.querySelector('#toast');
-    return !!toast && toast.textContent.trim().includes(text);
-  }, { text: expectedText }, { timeout });
-  const toast = await page.locator('#toast').textContent();
-  return toast.trim();
-};
+const errors = [];
+const browserErrors = [];
+let browser;
+let server;
 
 (async () => {
-  const browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage({ viewport: { width: 1366, height: 820 }, deviceScaleFactor: 1 });
-  const errors = [];
-
-  page.on('console', msg => {
-    if (msg.type() === 'error' || msg.type() === 'warning') errors.push(`console:${msg.type()}:${msg.text()}`);
+  server = httpServer.createServer({ root: process.cwd(), cache: -1, showDir: false });
+  await new Promise((resolve, reject) => {
+    server.listen(0, '127.0.0.1', resolve);
+    server.server.on('error', reject);
   });
-  page.on('pageerror', err => errors.push(`pageerror:${err.message}`));
-
-  await page.goto('http://127.0.0.1:8000', { waitUntil: 'domcontentloaded' });
-  await waitForToastToClear(page, 2000);
-  await page.screenshot({ path: 'presentation/current-interface.png', fullPage: false });
-
-  await page.click('[data-act="demo"][data-e="ana@shiftsync.demo"]');
-  await page.waitForSelector('#view');
-  await page.waitForFunction(() => document.querySelector('#who')?.textContent?.includes('Ana Reyes'));
-  await waitForToastToClear(page, 2000);
-  await page.screenshot({ path: 'presentation/employee-dashboard.png', fullPage: false });
-
-  const employeeHeader = (await page.locator('#view h1').textContent()).trim();
-  assert(employeeHeader.includes('Welcome'), `Employee dashboard did not load: ${employeeHeader}`);
-
-  await page.click('[data-act="go"][data-v="leave"]');
-  const start = new Date(Date.now() + 14 * 86400000);
-  const end = new Date(Date.now() + 16 * 86400000);
-  await page.locator('#lt').selectOption({ label: 'Vacation' });
-  await page.fill('#ls', fmt(start));
-  await page.fill('#le', fmt(end));
-  await page.fill('#lr', 'Family trip across the long weekend.');
-  await page.locator('form[data-form="leave"] button.btn').click();
-  const leaveToast = await waitForToastText(page, 'Leave request submitted', 8000);
-  assert(leaveToast.includes('pending'), `Leave submission toast did not show pending status: ${leaveToast}`);
-
-  await page.click('[data-act="logout"]');
-  await page.click('[data-act="demo"][data-e="admin@shiftsync.demo"]');
-  await page.waitForSelector('#view');
-  await waitForToastToClear(page, 2000);
-  await page.screenshot({ path: 'presentation/admin-dashboard.png', fullPage: false });
-
-  await page.click('[data-act="go"][data-v="asched"]');
-  const beforeRange = (await page.locator('.wk-range').textContent()).trim();
-  assert(beforeRange.length > 0, 'Schedule range missing in admin schedule view.');
-
-  await page.click('[data-act="wk"][data-n="-1"]');
-  const prevRange = (await page.locator('.wk-range').textContent()).trim();
-  assert(prevRange !== beforeRange, 'Previous-week navigation did not update the schedule range.');
-
-  await page.click('[data-act="wk"][data-n="1"]');
-  const nextRange = (await page.locator('.wk-range').textContent()).trim();
-  assert(nextRange !== prevRange, 'Next-week navigation did not update the schedule range.');
-
-  const scheduleSummary = await page.evaluate(() => {
-    const scroll = document.querySelector('.schedule-scroll');
-    const cells = Array.from(document.querySelectorAll('.grid thead th')).slice(1, 8);
-    const rights = cells.map(el => el.getBoundingClientRect().right);
-    const width = scroll ? scroll.getBoundingClientRect().width : 0;
-    return {
-      width: Math.round(width),
-      sevenDays: cells.length,
-      maxRight: Math.round(Math.max(...rights)),
-      fits: Math.max(...rights) <= (scroll ? scroll.getBoundingClientRect().right : 0) + 1,
-      range: document.querySelector('.wk-range')?.textContent?.trim() || ''
-    };
+  const { port } = server.server.address();
+  browser = await chromium.launch({ headless: true });
+  const page = await browser.newPage({ viewport: { width: 1366, height: 900 } });
+  page.on('console', message => {
+    if (message.type() === 'error') browserErrors.push(message.text());
   });
-  assert(scheduleSummary.sevenDays === 7, `Schedule did not render 7 days: ${JSON.stringify(scheduleSummary)}`);
-  assert(scheduleSummary.fits, `Seven-day schedule does not fit within the schedule container: ${JSON.stringify(scheduleSummary)}`);
-  await waitForToastToClear(page, 2000);
-  await page.screenshot({ path: 'presentation/schedule-management.png', fullPage: false });
+  page.on('pageerror', error => errors.push(error.message));
 
-  await page.click('[data-act="go"][data-v="aleave"]');
-  const pendingText = (await page.locator('section.card h2').first().textContent()).trim();
-  assert(pendingText.includes('Pending requests'), `Leave queue was not available: ${pendingText}`);
-  const pendingApproveButtons = page.locator('button[data-act="review"][data-s="approved"]');
-  const pendingRejectButtons = page.locator('button[data-act="review"][data-s="rejected"]');
-  assert(await pendingApproveButtons.count() > 0, 'Approval buttons were not found in pending leave requests.');
-  assert(await pendingRejectButtons.count() > 0, 'Rejection buttons were not found in pending leave requests.');
+  await page.goto(`http://127.0.0.1:${port}`, { waitUntil: 'domcontentloaded' });
+  const authForm = page.locator('#auth-form');
+  assert(await authForm.isVisible(), 'The candidate-designed login screen should be the default.');
+  assert(await page.locator('#quick-admin, #quick-emp, #toggle-mode, #reg-role').count() === 0, 'Login bypass and public registration controls must not exist.');
+  assert(await page.locator('[id^="role-switch"]').count() === 0, 'Public role-switch controls must not exist.');
 
-  const firstRemark = page.locator('input[aria-label*="Review remark"]').first();
-  await pendingRejectButtons.first().click();
-  await waitForToastText(page, 'Please add a remark when rejecting.', 8000);
-  await firstRemark.fill('Rejected during QA.');
-  await pendingRejectButtons.first().click();
-  await waitForToastText(page, 'Request rejected', 8000);
+  await page.locator('#auth-email').fill('unknown@example.com');
+  await page.locator('#auth-password').fill('demo123');
+  await authForm.locator('button[type="submit"]').click();
+  assert((await page.locator('#auth-error').textContent()).includes('Invalid demo credentials'), 'Unknown emails must be rejected.');
+  await page.locator('#auth-email').fill('admin@shiftsync.ph');
+  await page.locator('#auth-password').fill('wrong-password');
+  await authForm.locator('button[type="submit"]').click();
+  assert((await page.locator('#auth-error').textContent()).includes('Invalid demo credentials'), 'Incorrect passwords must be rejected.');
 
-  const secondRemark = page.locator('input[aria-label*="Review remark"]').first();
-  await secondRemark.fill('Approved during QA.');
-  await pendingApproveButtons.first().click();
-  await waitForToastText(page, 'Request approved', 8000);
+  await page.locator('#auth-email').fill('employee@shiftsync.ph');
+  await page.locator('#auth-password').fill('demo123');
+  await authForm.locator('button[type="submit"]').click();
+  assert(await page.locator('aside').isVisible(), 'Employee app shell should load after valid demo credentials.');
+  assert(await page.getByText('Live Time Tracker').count() > 0, 'Candidate dashboard must include its live time tracker.');
+  assert(await page.getByText('Upcoming Shifts Roster').count() > 0, 'Candidate dashboard must include its upcoming-shifts card.');
+  assert(await page.locator('.bg-gradient-to-r.from-brand-700').count() === 1, 'Candidate green enterprise welcome banner should be rendered.');
+  assert(await page.locator('[id^="role-switch"]').count() === 0, 'Role switching must remain unavailable after login.');
 
-  await waitForToastToClear(page, 2000);
-  await page.screenshot({ path: 'presentation/leave-management.png', fullPage: false });
+  await page.getByRole('button', { name: 'Calendar View' }).click();
+  await page.locator('#week-grid > div').nth(6).waitFor();
+  const waitForCalendarHandlers = () => page.waitForFunction(() =>
+    typeof document.querySelector('#cal-next')?.onclick === 'function' &&
+    typeof document.querySelector('#week-next')?.onclick === 'function'
+  );
+  await waitForCalendarHandlers();
+  assert(await page.locator('#week-grid > div').count() === 7, 'Weekly calendar should render all seven days.');
+  const monthHeadings = await page.locator('#calendar-grid').locator('xpath=preceding-sibling::div[1]').innerText();
+  assert(monthHeadings.replace(/\s+/g, ' ').trim().startsWith('MON TUE WED THU FRI SAT SUN'), 'Monthly calendar should start Monday and end Sunday.');
+  await page.locator('#cal-next').click();
+  await page.waitForFunction(() => document.querySelector('#printable-area h2')?.textContent.includes('November 2026'));
+  await waitForCalendarHandlers();
+  assert((await page.locator('#printable-area h2').first().textContent()).includes('November 2026'), 'Month navigation should advance the month.');
+  await page.locator('#cal-next').click();
+  await waitForCalendarHandlers();
+  await page.locator('#cal-next').click();
+  await page.waitForFunction(() => document.querySelector('#printable-area h2')?.textContent.includes('January 2027'));
+  await waitForCalendarHandlers();
+  assert((await page.locator('#printable-area h2').first().textContent()).includes('January 2027'), 'Month navigation should advance the year at December.');
+  await page.locator('#cal-prev').click();
+  await waitForCalendarHandlers();
+  await page.locator('#cal-prev').click();
+  await waitForCalendarHandlers();
+  await page.locator('#cal-prev').click();
+  await waitForCalendarHandlers();
+  const weekBefore = await page.locator('#week-range').textContent();
+  await page.locator('#week-next').click();
+  await page.waitForFunction(previousRange => document.querySelector('#week-range')?.textContent !== previousRange, weekBefore);
+  await waitForCalendarHandlers();
+  assert((await page.locator('#week-range').textContent()) !== weekBefore, 'Weekly schedule navigation should update the date range.');
+  await page.locator('#week-prev').click();
+  await waitForCalendarHandlers();
 
-  const pngFiles = [
-    'presentation/current-interface.png',
-    'presentation/employee-dashboard.png',
-    'presentation/admin-dashboard.png',
-    'presentation/schedule-management.png',
-    'presentation/leave-management.png'
-  ];
-  for (const file of pngFiles) {
-    const size = validatePng(file);
-    console.log(`${file}: ${size} bytes`);
+  const leaveStart = dateAfter(45);
+  await page.getByRole('button', { name: 'Leave Requests' }).click();
+  await page.getByRole('button', { name: 'Apply Leave' }).last().click();
+  await page.locator('#modal-leave-start').fill(leaveStart);
+  await page.locator('#modal-leave-end').fill(leaveStart);
+  await page.locator('#modal-leave-reason').fill('QA leave submission.');
+  await page.locator('#leave-modal-form button[type="submit"]').click();
+  assert((await page.locator('#app').innerText()).includes('QA leave submission.'), 'Employee leave request should be visible after submission.');
+
+  await page.getByRole('button', { name: 'Shift Swaps' }).click();
+  await page.getByRole('button', { name: 'Trade Shift' }).last().click();
+  await page.locator('#modal-swap-my-shift').selectOption('s5');
+  await page.locator('#modal-swap-target-user').selectOption('Angelica Reyes');
+  await page.locator('#modal-swap-reason').fill('QA shift transfer request.');
+  await page.locator('#swap-modal-form button[type="submit"]').click();
+  assert((await page.locator('#app').innerText()).includes('QA shift transfer request.'), 'Employee shift-swap request should appear in the queue.');
+
+  await page.getByRole('button', { name: 'Dashboard' }).click();
+  await page.getByRole('button', { name: 'Punch In' }).click();
+  await page.waitForTimeout(1100);
+  await page.getByRole('button', { name: 'Punch Out' }).click();
+  await page.getByRole('button', { name: 'Logs' }).click();
+  assert((await page.locator('#logs-modal-tbody').innerText()).includes('Juan Dela Cruz'), 'Activity logs should include employee records.');
+  const logDownload = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Export Logs CSV' }).click();
+  const logFile = await logDownload;
+  assert(logFile.suggestedFilename().endsWith('.csv'), 'Time-log export should download a CSV file.');
+  await page.locator('#logs-modal').getByRole('button', { name: 'Close' }).click();
+
+  await page.getByRole('button', { name: 'Team Directory' }).click();
+  assert(await page.getByText('Team Roster Directory').count() === 1, 'Team directory should render the candidate-style employee cards.');
+  await page.locator('aside').locator('button').last().click();
+  await page.locator('#prof-title').fill('QA Profile Title');
+  await page.locator('#profile-form button[type="submit"]').click();
+  assert(await page.locator('#prof-title').inputValue() === 'QA Profile Title', 'Profile edits should update the current demo account.');
+  await page.locator('#notif-toggle').click();
+  assert(await page.locator('#notif-dropdown').isVisible(), 'Notification dropdown should open.');
+  await page.locator('#mark-notifs-read').click();
+  await page.getByRole('button', { name: 'Toggle light and dark theme' }).click();
+  assert((await page.locator('html').getAttribute('class')).includes('dark'), 'Theme control should enable the dark theme.');
+  await page.getByRole('button', { name: 'Toggle light and dark theme' }).click();
+
+  await page.locator('#logout-btn').click();
+  await page.locator('#auth-email').fill('admin@shiftsync.ph');
+  await page.locator('#auth-password').fill('demo123');
+  await page.locator('#auth-form button[type="submit"]').click();
+  assert(await page.getByRole('button', { name: 'Labor & Payroll' }).count() === 1, 'Administrator account should expose labor analytics.');
+
+  await page.getByRole('button', { name: 'Shift Roster' }).click();
+  await page.getByRole('button', { name: 'Assign Shift' }).last().click();
+  const assignedDate = dateAfter(50);
+  await page.locator('#modal-shift-user').selectOption({ label: 'Marcus Vance (employee)' });
+  await page.locator('#modal-shift-date').fill(assignedDate);
+  await page.locator('#modal-shift-type').selectOption('Morning');
+  await page.locator('#modal-shift-time').fill('09:00 - 17:00');
+  await page.locator('#modal-shift-role').fill('QA assigned role');
+  await page.locator('#shift-modal-form button[type="submit"]').click();
+  assert((await page.locator('#app').innerText()).includes(assignedDate), 'Administrator shift assignment should appear in the roster.');
+
+  await page.getByRole('button', { name: 'Leave Requests' }).click();
+  const leaveRow = page.locator('tbody tr').filter({ hasText: 'QA leave submission.' });
+  assert(await leaveRow.count() === 1, 'Administrator should see the employee leave request.');
+  await leaveRow.getByRole('button', { name: 'Approve' }).click();
+  assert((await page.locator('#app').innerText()).includes('Approved'), 'Administrator should be able to approve a request.');
+  const rejectRow = page.locator('tbody tr').filter({ hasText: 'Angelica Reyes' }).filter({ hasText: 'Medical appointment and recovery' });
+  assert(await rejectRow.count() === 1, 'Administrator should be able to review another pending leave request.');
+  await rejectRow.getByRole('button', { name: 'Reject' }).click();
+  assert((await rejectRow.innerText()).includes('Rejected'), 'Administrator should be able to reject a leave request.');
+
+  await page.getByRole('button', { name: 'Shift Swaps' }).click();
+  const swapRow = page.locator('tbody tr').filter({ hasText: 'QA shift transfer request.' });
+  assert(await swapRow.count() === 1, 'Administrator should see the employee shift-swap request.');
+  await swapRow.getByRole('button', { name: 'Approve' }).click();
+  assert((await swapRow.innerText()).includes('Approved'), 'Administrator should approve a valid shift transfer.');
+  await page.getByRole('button', { name: 'Shift Roster' }).click();
+  assert((await page.locator('#app').innerText()).includes('Angelica Reyes'), 'Approved shift transfer should update the assigned employee.');
+
+  await page.getByRole('button', { name: 'Labor & Payroll' }).click();
+  assert((await page.locator('#app').innerText()).includes('Estimated Roster Cost'), 'Labor analytics should show a calculated roster cost.');
+  assert(!(await page.locator('#app').innerText()).includes('428,500'), 'Analytics must not show the candidate hard-coded payroll figure.');
+  const payrollDownload = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Export Payroll CSV' }).click();
+  const payrollFile = await payrollDownload;
+  assert(payrollFile.suggestedFilename().endsWith('.csv'), 'Payroll estimate export should download a CSV file.');
+  const payrollPath = await payrollFile.path();
+  const payrollCsv = await fs.readFile(payrollPath, 'utf8');
+  assert(payrollCsv.includes('Scheduled Hours') && payrollCsv.includes('Estimated Roster Cost'), 'Payroll CSV should use calculated roster data.');
+
+  const viewportResults = [];
+  await page.getByRole('button', { name: 'Calendar View' }).click();
+  await page.locator('#week-grid > div').nth(6).waitFor();
+  for (const width of [1366, 1024, 768, 375]) {
+    await page.setViewportSize({ width, height: 900 });
+    const layout = await page.evaluate(() => {
+      const grid = document.querySelector('#week-grid');
+      const days = [...grid.children];
+      const bounds = grid.parentElement.getBoundingClientRect();
+      const rightEdge = Math.max(...days.map(day => day.getBoundingClientRect().right));
+      return {
+        viewport: window.innerWidth,
+        documentWidth: document.documentElement.scrollWidth,
+        dayCount: days.length,
+        daysFit: rightEdge <= bounds.right + 1,
+        weekCanScroll: grid.parentElement.scrollWidth > grid.parentElement.clientWidth
+      };
+    });
+    viewportResults.push(layout);
+    assert(layout.documentWidth <= width + 1, `Page overflows horizontally at ${width}px: ${JSON.stringify(layout)}`);
+    assert(layout.dayCount === 7, `Weekly schedule should contain seven days at ${width}px: ${JSON.stringify(layout)}`);
+    if (width === 1366) assert(layout.daysFit, `All seven days must fit at 1366px: ${JSON.stringify(layout)}`);
+    if (width <= 768) assert(layout.weekCanScroll, `The weekly calendar should scroll internally at ${width}px.`);
   }
 
-  console.log('schedule_summary=' + JSON.stringify(scheduleSummary));
-  console.log('browser_errors=' + JSON.stringify(errors));
+  assert(errors.length === 0, `Page errors were observed: ${JSON.stringify(errors)}`);
+  assert(browserErrors.length === 0, `Browser console errors were observed: ${JSON.stringify(browserErrors)}`);
+  console.log(`viewport_results=${JSON.stringify(viewportResults)}`);
+  console.log('browser_errors=[]');
   console.log('qa_status=passed');
   await browser.close();
-})();
+  await new Promise(resolve => server.close(resolve));
+})().catch(error => {
+  console.error(error);
+  browser?.close();
+  server?.close();
+  process.exitCode = 1;
+});

@@ -1,74 +1,76 @@
 # ShiftSync
 
-ShiftSync is a workplace shift scheduling and leave management prototype. Employees can review their schedules and submit leave requests; administrators can assign shifts and review requests. The prototype uses in-memory sample data and does not connect to PHP or MySQL.
+ShiftSync currently has a browser-only workplace scheduling and leave-management frontend. A separate PHP/MySQL development foundation is being introduced, but dashboard data and authentication are not connected to it.
 
-## Run the prototype
+## Run locally
 
-Open `index.html` in a modern browser, or serve the project directory locally:
-
-```sh
-python3 -m http.server 8000
-```
-
-Then visit [http://localhost:8000](http://localhost:8000). No package installation or build step is required. Demo changes reset when the page is refreshed.
-
-## GitHub Codespaces and local QA
-
-From the terminal in Codespaces or your local clone:
+Open `index.html` in a modern browser, or serve this directory:
 
 ```sh
 npm install
 npm start
 ```
 
-In a second terminal, run:
+Then visit [http://localhost:8000](http://localhost:8000). Until a later API integration phase, dashboard records and profile edits are held in memory and reset when the page is refreshed.
 
-```sh
-npm test
-```
+## Demo sign-in
 
-`npm start` serves the current frontend on port 8000. `npm test` runs the Playwright-based QA smoke test that validates the main employee/admin flows, leave approval/rejection logic, and the seven-day schedule layout at 1366px.
+The login screen is shown by default. Use one of these sample accounts with password `demo123`:
 
-## Demo accounts
+| Role | Email |
+| --- | --- |
+| Employee | `employee@shiftsync.ph` |
+| Administrator | `admin@shiftsync.ph` |
 
-Use either the sign-in form or the instant demo buttons:
+This is **not secure authentication**. The account list and demo password are shipped to the browser, and role checks are only frontend behavior. Do not use real credentials or sensitive data. Unknown emails and incorrect passwords are rejected. Public registration, quick-login bypasses, and role switching are not provided. Real authentication and authorization require the planned PHP/MySQL backend, password hashing, sessions, and server-side checks.
 
-| Role | Email | Password |
-| --- | --- | --- |
-| Employee | `ana@shiftsync.demo` | `demo123` |
-| Administrator | `admin@shiftsync.demo` | `demo123` |
+## Implemented prototype workflows
 
-This demo login is not secure authentication. Do not use real credentials or sensitive data.
+- Candidate-based ShiftSync Enterprise dashboard with the emerald/green visual design, sidebar navigation, live time tracker, metrics, and upcoming-shift roster.
+- Monday-to-Sunday weekly schedule and Monday-first monthly calendar with navigation; administrator shift assignment and roster management.
+- Shift roster search/filter and printing.
+- Team directory using sample profile data.
+- Leave request submission with date-range validation, overlapping-request checks, and administrator approval/rejection.
+- Shift-transfer requests to a coworker; administrator approval transfers the requested assignment only when the shift still exists and the recipient has no same-day shift or approved leave.
+- In-memory clock-in/out records, activity log, and CSV export.
+- Labor/payroll estimates calculated from sample hourly rates and assigned shift durations. These are planning estimates, not payroll results.
+- Editable demo profile fields, in-app notifications, and light/dark themes.
 
-## Features
-
-- Employee dashboard with upcoming shifts, a weekly schedule, and recent leave requests.
-- Leave submission with local-date validation, overlapping-request prevention, and visible schedule-conflict warnings.
-- Administrator dashboard with employee, shift, pending-request, and daily staffing counts calculated from the sample data.
-- Weekly schedule management with year-inclusive week navigation, a shift-color legend, keyboard-accessible assignment cells, historical-shift editing, and shift-type management.
-- Leave approval and rejection; a remark is required to reject a request.
-- Responsive navigation, tables, and schedule grid for desktop through mobile viewports.
+All mutations are local to the current browser page. No action writes to a backend, sends a real notification, or persists after refresh.
 
 ## Project files
 
-- `index.html`, `style.css`, and `app.js` — the frontend prototype.
-- `data.js` — in-memory demo users, schedules, shifts, and leave requests.
-- `ERD.md` and `schema.sql` — database design documentation for a future backend.
-- `presentation/` — presentation assets.
+- `index.html`, `style.css`, `app.js` — application shell, styles, and frontend behavior.
+- `data.js` — sample users, shifts, schedules, leave requests, notifications, and in-memory records.
+- `ERD.md`, `schema.sql` — database design for a future backend; neither is executed by this prototype.
+- `shiftsync-candidate.html` — not present in this workspace checkout; the current `index.html`, `style.css`, `app.js`, and `data.js` are the source of truth.
+- `presentation/` — existing presentation assets. They have been preserved and not regenerated as part of this interface integration.
 
-## Presentation materials
+## QA
 
-- `presentation/current-interface.png`, `presentation/employee-dashboard.png`, and `presentation/admin-dashboard.png` were recaptured in-browser during this QA pass and verified as non-empty PNGs showing the current UI.
-- `presentation/schedule-management.png` and `presentation/leave-management.png` were also captured in-browser during this QA pass and verified as non-empty PNGs showing the current schedule and leave-management screens.
-- `presentation/ShiftSync_ERD.png` is the verified ERD preview; `presentation/ShiftSync_ERD.svg` is the editable vector copy.
-- `presentation/ShiftSync_Presentation_Checklist.md` records the verified status for this prototype snapshot; no additional browser capture is required unless the UI changes again.
+Run `npm test` to execute the Playwright browser checks. The test suite exercises login validation, employee/admin navigation, leave review, schedule assignment, shift transfers, time logs, CSV downloads, profile/theme/notification controls, and layout at desktop, tablet, and mobile viewports. Tests do not overwrite the existing presentation images.
 
-## Verification status
+## PHP + MySQL development foundation
 
-- Frontend QA performed in-browser with Playwright: demo employee login, admin login, schedule navigation, leave submission, approval/rejection controls, weekly schedule at 1366px, and responsive layout checks.
-- Console errors: none observed during the smoke test.
-- Remaining manual tasks: none for this snapshot. If the interface changes further, re-run the captures and PDF/image validation before the next presentation.
+The backend foundation uses Docker Compose because this Codespaces image has Docker but does not include the PHP MySQL PDO extension or a MySQL server. The database stores data in the persistent `shiftsync_mysql_data` volume and does not publish port 3306. In this Codespaces environment, the PHP container shares the database container's private network namespace; only the PHP HTTP port is bound to `127.0.0.1:8080`. The PHP service includes `pdo_mysql` and serves only the generic database health endpoint; the frontend is not connected to it yet. The development database user has schema-level privileges only on `shiftsync_dev` so it can run the initializer; production should use separate, least-privilege runtime and migration accounts.
 
-## Prototype limitations
+1. Copy `.env.example` to `.env` and replace both password placeholders with different, randomly generated development-only passwords. Do not commit `.env`.
+2. Build and start the services:
 
-The app has no server or persistence. Schedule assignments, leave submissions, and review actions modify only in-memory demo data and reset on refresh. Demo credentials are for preview only, not secure authentication. The proposed SQL schema has not been executed against a database.
+   ```sh
+   docker compose up -d --build
+   ```
+
+3. Test the database connection and initialize only a fresh development database:
+
+   ```sh
+   docker compose exec app php bin/db-test.php
+   docker compose exec app php bin/migrate.php
+   docker compose exec app php bin/verify-schema.php
+   ```
+
+4. Check the generic health response at [http://localhost:8080/health.php](http://localhost:8080/health.php). Codespaces may ask you to forward port 8080 for browser access.
+
+The migration refuses to initialize a database containing untracked application tables. It does not drop, truncate, or migrate existing data. Do not delete the named volume to reset the database. The host PHP installation does not have `pdo_mysql`; run backend PHP commands through the Compose `app` service. Keep the frontend running separately with `npm start` on port 8000.
+
+Phase 1 provides only environment-based PDO configuration, a guarded fresh-schema initializer, a connection check, table verification, and a health endpoint. It does **not** implement login, sessions, authorization middleware, or feature APIs.

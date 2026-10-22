@@ -1,54 +1,273 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="h-full">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="theme-color" content="#f3f6fb">
-<meta name="description" content="ShiftSync workplace shift and leave management demo.">
-<title>ShiftSync — Workplace Scheduling</title>
-<link rel="stylesheet" href="style.css">
-</head>
-<body>
-<a class="skip-link btn" href="#view">Skip to content</a>
-<!-- Login screen demo only -->
-<div id="login" class="login"><div class="box">
-  <div class="brand"><span class="brand-mark" aria-hidden="true">S</span>ShiftSync</div>
-  <h1>Sign in</h1>
-  <p class="intro">Workforce scheduling and leave management, in one place.</p>
-  <p class="note">Demo prototype using sample data only. This login is not secure authentication and is not connected to a database.</p>
-  <form data-form="login" novalidate>
-    <label for="em">Email address</label><input id="em" name="email" type="email" autocomplete="username" placeholder="ana@shiftsync.demo" aria-describedby="lerr">
-    <label for="pw">Password</label>
-    <div class="password-control"><input id="pw" name="pw" type="password" autocomplete="current-password" placeholder="demo123" aria-describedby="lerr">
-      <button class="password-toggle" type="button" data-act="toggle-password" aria-controls="pw" aria-label="Show password" aria-pressed="false">Show</button></div>
-    <p id="lerr" class="err" role="alert" aria-live="polite"></p>
-    <button class="btn full">Sign in</button>
-  </form>
-  <p class="preview">Or preview instantly with a demo account:</p>
-  <div class="demo-actions">
-    <button class="btn vio" data-act="demo" data-e="ana@shiftsync.demo">Demo Employee</button>
-    <button class="btn ghost" data-act="demo" data-e="admin@shiftsync.demo">Demo Admin</button>
-  </div>
-</div></div>
-<!-- App shell -->
-<div id="app" hidden>
-  <aside id="side"><div class="brand"><span class="brand-mark" aria-hidden="true">S</span>ShiftSync</div><nav id="nav" aria-label="Main navigation"></nav>
-    <p class="small">Prototype · sample data resets on refresh.</p></aside>
-  <div class="main">
-    <header class="top">
-      <button id="menu" class="btn ghost" data-act="menu" aria-label="Open navigation menu" aria-controls="side" aria-expanded="false">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
-      </button>
-      <span class="badge prototype-badge">Demo · sample data</span>
-      <div class="user"><span id="who"></span><button class="btn ghost" data-act="logout">Log out</button></div>
-    </header>
-    <main id="view" tabindex="-1"></main>
-  </div>
-</div>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ShiftSync Enterprise — Centralized Shift & Leave Management System</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                    colors: {
+                        brand: {
+                            50: '#f0fdf4',
+                            100: '#dcfce7',
+                            200: '#bbf7d0',
+                            500: '#22c55e',
+                            600: '#16a34a',
+                            700: '#15803d',
+                            800: '#166534',
+                            900: '#14532d',
+                            950: '#052e16'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
 
-<dialog id="dlg"></dialog>
-<div id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
-<script src="./data.js"></script>
-<script src="./app.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="./style.css">
+</head>
+<body class="h-full bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 antialiased">
+
+
+    <div id="app" class="h-full w-full flex flex-col overflow-hidden"></div>
+
+
+    <div id="toast-container" class="fixed bottom-5 right-5 z-50 flex flex-col gap-3 pointer-events-none"></div>
+
+
+    <div id="leave-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
+        <div class="w-full max-w-lg bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 p-6 md:p-8 transform transition-all">
+            <div class="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-xl bg-brand-50 dark:bg-brand-950 text-brand-600 flex items-center justify-center font-bold text-lg">
+                        <i class="fa-solid fa-umbrella-beach"></i>
+                    </div>
+                    <div>
+                        <h3 class="text-lg font-bold text-slate-900 dark:text-white">Request Time-Off / Leave</h3>
+                        <p class="text-xs text-slate-500">Submit a leave request for administrative review</p>
+                    </div>
+                </div>
+                <button onclick="window.closeLeaveModal()" class="w-8 h-8 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center transition">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <form id="leave-modal-form" class="mt-6 space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">Leave Type *</label>
+                    <select id="modal-leave-type" required class="w-full px-3.5 py-2.5 text-sm rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-brand-500 outline-none">
+                        <option value="Vacation">Vacation Leave</option>
+                        <option value="Sick Leave">Sick Leave</option>
+                        <option value="Emergency Leave">Emergency Leave</option>
+                        <option value="Maternity/Paternity">Maternity/Paternity Leave</option>
+                        <option value="Bereavement Leave">Bereavement Leave</option>
+                    </select>
+                </div>
+
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">Start Date *</label>
+                        <input type="date" id="modal-leave-start" required class="w-full px-3.5 py-2.5 text-sm rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-brand-500 outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">End Date *</label>
+                        <input type="date" id="modal-leave-end" required class="w-full px-3.5 py-2.5 text-sm rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-brand-500 outline-none">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">Reason for Leave *</label>
+                    <textarea id="modal-leave-reason" rows="3" required placeholder="Provide reason or comments for your leave application..." class="w-full px-3.5 py-2.5 text-sm rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-brand-500 outline-none resize-none"></textarea>
+                </div>
+
+                <div class="pt-3 flex items-center justify-end gap-3">
+                    <button type="button" onclick="window.closeLeaveModal()" class="px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 font-semibold text-xs transition">
+                        Cancel
+                    </button>
+                    <button type="submit" class="px-5 py-2.5 rounded-xl bg-brand-600 hover:bg-brand-700 text-white font-semibold text-xs shadow-lg shadow-brand-500/25 transition flex items-center gap-2">
+                        <i class="fa-solid fa-paper-plane"></i>
+                        <span>Submit Request</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+
+    <div id="logs-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
+        <div class="w-full max-w-2xl bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 p-6 md:p-8 transform transition-all flex flex-col max-h-[85vh]">
+            <div class="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-xl bg-brand-50 dark:bg-brand-950 text-brand-600 flex items-center justify-center font-bold text-lg">
+                        <i class="fa-solid fa-clock-rotate-left"></i>
+                    </div>
+                    <div>
+                        <h3 class="text-lg font-bold text-slate-900 dark:text-white">Time Tracker Activity Logs</h3>
+                        <p class="text-xs text-slate-500">History of punch-in and punch-out timestamps</p>
+                    </div>
+                </div>
+                <button onclick="window.closeLogsModal()" class="w-8 h-8 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center transition">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <div class="flex-1 overflow-y-auto py-4 custom-scrollbar">
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse text-xs">
+                        <thead>
+                            <tr class="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800 text-slate-500 uppercase">
+                                <th class="p-3">Employee</th>
+                                <th class="p-3">Date</th>
+                                <th class="p-3">Clock In</th>
+                                <th class="p-3">Clock Out</th>
+                                <th class="p-3">Duration</th>
+                                <th class="p-3">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody id="logs-modal-tbody" class="divide-y divide-slate-100 dark:divide-slate-800">
+
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="pt-4 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                <button onclick="window.exportTimeLogsCSV()" class="px-4 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 font-semibold text-xs transition flex items-center gap-2">
+                    <i class="fa-solid fa-file-arrow-down text-brand-600"></i>
+                    <span>Export Logs CSV</span>
+                </button>
+                <button onclick="window.closeLogsModal()" class="px-4 py-2.5 rounded-xl bg-brand-600 hover:bg-brand-700 text-white font-semibold text-xs transition">
+                    Close
+                </button>
+            </div>
+        </div>
+    </div>
+
+
+    <div id="shift-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
+        <div class="w-full max-w-lg bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 p-6 md:p-8 transform transition-all">
+            <div class="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-xl bg-brand-50 dark:bg-brand-950 text-brand-600 flex items-center justify-center font-bold text-lg">
+                        <i class="fa-solid fa-calendar-plus"></i>
+                    </div>
+                    <div>
+                        <h3 class="text-lg font-bold text-slate-900 dark:text-white">Assign New Shift</h3>
+                        <p class="text-xs text-slate-500">Schedule team members into work roster</p>
+                    </div>
+                </div>
+                <button onclick="window.closeShiftModal()" class="w-8 h-8 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center transition">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <form id="shift-modal-form" class="mt-6 space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">Select Employee *</label>
+                    <select id="modal-shift-user" required class="w-full px-3.5 py-2.5 text-sm rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-brand-500 outline-none">
+
+                    </select>
+                </div>
+
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">Shift Date *</label>
+                        <input type="date" id="modal-shift-date" required class="w-full px-3.5 py-2.5 text-sm rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-brand-500 outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">Shift Type *</label>
+                        <select id="modal-shift-type" required class="w-full px-3.5 py-2.5 text-sm rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-brand-500 outline-none">
+                            <option value="Morning">Morning Shift</option>
+                            <option value="Evening">Evening Shift</option>
+                            <option value="Night">Night Shift</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">Time Schedule *</label>
+                        <input type="text" id="modal-shift-time" required placeholder="09:00 - 18:00" class="w-full px-3.5 py-2.5 text-sm rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-brand-500 outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">Assigned Role *</label>
+                        <input type="text" id="modal-shift-role" required placeholder="Frontend Lead" class="w-full px-3.5 py-2.5 text-sm rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-brand-500 outline-none">
+                    </div>
+                </div>
+
+                <div class="pt-3 flex items-center justify-end gap-3">
+                    <button type="button" onclick="window.closeShiftModal()" class="px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 font-semibold text-xs transition">
+                        Cancel
+                    </button>
+                    <button type="submit" class="px-5 py-2.5 rounded-xl bg-brand-600 hover:bg-brand-700 text-white font-semibold text-xs shadow-lg shadow-brand-500/25 transition flex items-center gap-2">
+                        <i class="fa-solid fa-plus"></i>
+                        <span>Assign Shift</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+
+    <div id="swap-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
+        <div class="w-full max-w-lg bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 p-6 md:p-8 transform transition-all">
+            <div class="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-xl bg-teal-50 dark:bg-teal-950 text-teal-600 flex items-center justify-center font-bold text-lg">
+                        <i class="fa-solid fa-right-left"></i>
+                    </div>
+                    <div>
+                        <h3 class="text-lg font-bold text-slate-900 dark:text-white">Trade / Swap Shift</h3>
+                        <p class="text-xs text-slate-500">Request shift exchange with a colleague</p>
+                    </div>
+                </div>
+                <button onclick="window.closeSwapModal()" class="w-8 h-8 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center transition">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <form id="swap-modal-form" class="mt-6 space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">Your Shift *</label>
+                    <select id="modal-swap-my-shift" required class="w-full px-3.5 py-2.5 text-sm rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-brand-500 outline-none">
+
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">Swap With Colleague *</label>
+                    <select id="modal-swap-target-user" required class="w-full px-3.5 py-2.5 text-sm rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-brand-500 outline-none">
+
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">Reason for Swap Request *</label>
+                    <textarea id="modal-swap-reason" rows="3" required placeholder="Explain why you are requesting to trade this shift..." class="w-full px-3.5 py-2.5 text-sm rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-brand-500 outline-none resize-none"></textarea>
+                </div>
+
+                <div class="pt-3 flex items-center justify-end gap-3">
+                    <button type="button" onclick="window.closeSwapModal()" class="px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 font-semibold text-xs transition">
+                        Cancel
+                    </button>
+                    <button type="submit" class="px-5 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-semibold text-xs shadow-lg shadow-teal-500/25 transition flex items-center gap-2">
+                        <i class="fa-solid fa-right-left"></i>
+                        <span>Submit Swap Request</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+    <script src="./data.js"></script>
+    <script src="./app.js"></script>
 </body>
 </html>
