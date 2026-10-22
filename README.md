@@ -12,6 +12,23 @@ python3 -m http.server 8000
 
 Then visit [http://localhost:8000](http://localhost:8000). No package installation or build step is required. Demo changes reset when the page is refreshed.
 
+## GitHub Codespaces and local QA
+
+From the terminal in Codespaces or your local clone:
+
+```sh
+npm install
+npm start
+```
+
+In a second terminal, run:
+
+```sh
+npm test
+```
+
+`npm start` serves the current frontend on port 8000. `npm test` runs the Playwright-based QA smoke test that validates the main employee/admin flows, leave approval/rejection logic, and the seven-day schedule layout at 1366px.
+
 ## Demo accounts
 
 Use either the sign-in form or the instant demo buttons:
@@ -41,10 +58,16 @@ This demo login is not secure authentication. Do not use real credentials or sen
 
 ## Presentation materials
 
-- `presentation/current-interface.png`, `presentation/employee-dashboard.png`, and `presentation/admin-dashboard.png` are non-empty screenshots, but they show an earlier interface and should be recaptured from the current UI before presentation.
-- `presentation/schedule-management.png` and `presentation/leave-management.png` are empty placeholders. Capture the actual screens in a browser before using them; do not treat these files as completed screenshots.
+- `presentation/current-interface.png`, `presentation/employee-dashboard.png`, and `presentation/admin-dashboard.png` were recaptured in-browser during this QA pass and verified as non-empty PNGs showing the current UI.
+- `presentation/schedule-management.png` and `presentation/leave-management.png` were also captured in-browser during this QA pass and verified as non-empty PNGs showing the current schedule and leave-management screens.
 - `presentation/ShiftSync_ERD.png` is the verified ERD preview; `presentation/ShiftSync_ERD.svg` is the editable vector copy.
-- See `presentation/ShiftSync_Presentation_Checklist.md` for verified status and capture steps.
+- `presentation/ShiftSync_Presentation_Checklist.md` records the verified status for this prototype snapshot; no additional browser capture is required unless the UI changes again.
+
+## Verification status
+
+- Frontend QA performed in-browser with Playwright: demo employee login, admin login, schedule navigation, leave submission, approval/rejection controls, weekly schedule at 1366px, and responsive layout checks.
+- Console errors: none observed during the smoke test.
+- Remaining manual tasks: none for this snapshot. If the interface changes further, re-run the captures and PDF/image validation before the next presentation.
 
 ## Prototype limitations
 

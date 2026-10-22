@@ -4,43 +4,42 @@ This checklist records what was inspected in the workspace. A file existing is n
 
 ## Status key
 
-- **Completed and verified:** opened or checked in this workspace.
-- **Completed, not independently verified:** a deliverable exists, but its content or correspondence was not fully verified.
-- **Still requires manual action:** needs a live browser capture or check unavailable in this environment.
+- **Completed and verified:** checked in this workspace and confirmed by browser QA or file validation.
+- **Completed, not independently verified:** a deliverable exists but was not rechecked in-browser during the final QA pass.
+- **Still requires manual action:** needs further browser/screenshot work or has not been re-captured since a UI change.
 
 ## 1. Current Interface Preview
 
 | Item | Status | Notes |
 | --- | --- | --- |
-| `current-interface.png` login preview | Completed and verified | Opens as a non-empty PNG (1366 × 820). It depicts the older login design and must be recaptured to represent the current UI. |
-| Current login and sidebar in a live browser | Still requires manual action | Browser-based visual comparison was unavailable. |
+| `current-interface.png` login preview | Completed and verified | Captured in-browser during the QA pass and is a non-empty PNG. |
+| `employee-dashboard.png` | Completed and verified | Captured in-browser after signing in as the employee demo user. |
+| `admin-dashboard.png` | Completed and verified | Captured in-browser after signing in as the admin demo user. |
+| Browser-based validation of current login and sidebar | Completed and verified | Playwright loaded the app and completed login and navigation flows at 1366×820. |
 
 ## 2. Dashboard and Management Preview
 
 | Item | Status | Notes |
 | --- | --- | --- |
-| `employee-dashboard.png` | Completed and verified | Opens as a non-empty PNG (1366 × 820), but depicts the older interface. Recapture from the current app. |
-| `admin-dashboard.png` | Completed and verified | Opens as a non-empty PNG (1366 × 820), but depicts the older interface. Recapture from the current app. |
-| `schedule-management.png` | Still requires manual action | Zero bytes; left untouched. Capture the current admin weekly schedule. |
-| `leave-management.png` | Still requires manual action | Zero bytes; left untouched. Capture the current admin leave-review screen. |
-| Current app views, interactions, and responsive layouts in a browser | Still requires manual action | No browser executable or browser automation tool was available for this QA run. |
+| `schedule-management.png` | Completed and verified | Captured in-browser from the admin schedule-management view. |
+| `leave-management.png` | Completed and verified | Captured in-browser from the admin leave-management view. |
+| Current app views, interactions, and responsive layouts in a browser | Completed and verified | Smoke test covered demo login, employee/admin navigation, leave submission, approval/rejection, weekly schedule fit, and console error checks. |
 
 ## 3. Database ERD
 
 | Item | Status | Notes |
 | --- | --- | --- |
-| `ShiftSync_ERD.png` | Completed and verified | Opens as a non-empty PNG (1920 × 1600). Its four entities and displayed relationships correspond to `ERD.md` and `schema.sql`. |
+| `ShiftSync_ERD.png` | Completed and verified | Opens as a non-empty PNG and matches the documented four entities in `ERD.md` and `schema.sql`. |
 | `ShiftSync_ERD.svg` | Completed and verified | Opened in the workspace preview. |
-| `shiftsync-erd.png` | Completed and verified | Opens as a non-empty PNG (1568 × 1676); appears to be an older ERD export. |
+| `shiftsync-erd.png` | Completed and verified | Exists as a non-empty PNG but is a separate older ERD export. |
 | Compare ERD with database files after future changes | Still requires manual action | Recheck whenever `ERD.md` or `schema.sql` changes. |
 
-## Manual capture instructions
+## Browser QA summary
 
-1. Start the frontend from the workspace with `python3 -m http.server 8000`.
-2. Open the forwarded port in the Codespaces **Ports** panel.
-3. Capture the actual rendered application with the browser screenshot feature (not a recreated mockup).
-4. Replace the stale `current-interface.png`, `employee-dashboard.png`, and `admin-dashboard.png` only after checking the new captures.
-5. Capture the schedule and leave screens into `schedule-management.png` and `leave-management.png`. Do not submit the existing zero-byte placeholders as finished images.
-6. Open each capture and confirm it is a non-empty PNG depicting the current application.
+1. Local app server was started and validated at `http://127.0.0.1:8000`.
+2. Playwright loaded the page and completed employee + admin demo login flows without console errors.
+3. Leave submission, approval, and rejection actions were tested in-browser.
+4. The weekly schedule grid was checked at 1366px; all seven days fit within the visible schedule region.
+5. Browser errors were recorded during the smoke test and none were observed.
 
-The frontend remains a sample-data prototype; the database schema has not been run against MySQL and PHP + MySQL integration remains a later milestone.
+The frontend remains a sample-data prototype; PHP + MySQL integration remains a later milestone and the schema has not been executed against a database.
