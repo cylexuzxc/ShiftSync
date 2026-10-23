@@ -1,0 +1,183 @@
+name: Validate MySQL Migrations
+
+on:
+  workflow_dispatch:
+
+jobs:
+  validate-migrations:
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: rootpass
+          MYSQL_DATABASE: mysql
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping --host=127.0.0.1 --user=root --password=rootpass --silent"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=20
+
+    env:
+      MYSQL_ROOT_PASSWORD: rootpass
+      DB_HOST: 127.0.0.1
+      DB_PORT: "3306"
+      DB_SSL_VERIFY: "false"
+      DB_SSL_CA: /tmp/unused-ca.pem
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install PHP, PDO MySQL, and MySQL client
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y mysql-client php-cli php-mysql
+          php -v
+          php -m | grep -i pdo_mysql
+
+      - name: Create disposable database and user
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          TEST_DB_PREFIX="shiftsync_ci"
+          TEST_DB="${TEST_DB_PREFIX}_${GITHUB_RUN_ID}"
+          TEST_USER="${TEST_DB_PREFIX}_${GITHUB_RUN_ID}"
+          TEST_PASS="$(openssl rand -hex 24)"
+
+          if [[ ! "${TEST_DB}" =~ ^[A-Za-z0-9_]+$ ]]; then
+            echo "Temporary database name is invalid." >&2
+            exit 1
+          fi
+          if [[ ! "${TEST_USER}" =~ ^[A-Za-z0-9_]+$ ]]; then
+            echo "Temporary database username is invalid." >&2
+            exit 1
+          fi
+
+          echo "TEST_DB=${TEST_DB}" >> "$GITHUB_ENV"
+          echo "TEST_USER=${TEST_USER}" >> "$GITHUB_ENV"
+          echo "TEST_PASS=${TEST_PASS}" >> "$GITHUB_ENV"
+          echo "::add-mask::${TEST_PASS}"
+
+          mysql_exec() {
+            local sql="$1"
+            mysql --host=127.0.0.1 --port=3306 --user=root --password="$MYSQL_ROOT_PASSWORD" --batch --silent -e "$sql"
+          }
+
+          mysql_exec "CREATE DATABASE IF NOT EXISTS \`${TEST_DB}\`;"
+          mysql_exec "CREATE USER IF NOT EXISTS '${TEST_USER}'@'%' IDENTIFIED BY '${TEST_PASS}';"
+          mysql_exec "GRANT ALL PRIVILEGES ON \`${TEST_DB}\`.* TO '${TEST_USER}'@'%'; FLUSH PRIVILEGES;"
+
+      - name: Bootstrap database and run fresh migration
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          # Fresh database bootstrap sequence:
+          # 1) create an empty disposable database, then
+          # 2) run php bin/migrate.php
+          # bin/migrate.php creates schema_migrations and applies:
+          #    001_initial_foundation => schema.sql
+          #    002_dashboard_profile_schedule_fields => database/migrations/002_dashboard_profile_schedule_fields.sql
+          # This is the actual intended initialization path; no standalone schema.sql import is required.
+          export DB_NAME="$TEST_DB"
+          export DB_USER="$TEST_USER"
+          export DB_PASSWORD="$TEST_PASS"
+          export DB_HOST=127.0.0.1
+          export DB_PORT=3306
+          export DB_SSL_VERIFY=false
+          export DB_SSL_CA=/tmp/unused-ca.pem
+          php bin/migrate.php
+
+      - name: Repeat migration for idempotency
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          export DB_NAME="$TEST_DB"
+          export DB_USER="$TEST_USER"
+          export DB_PASSWORD="$TEST_PASS"
+          export DB_HOST=127.0.0.1
+          export DB_PORT=3306
+          export DB_SSL_VERIFY=false
+          export DB_SSL_CA=/tmp/unused-ca.pem
+          php bin/migrate.php
+
+      - name: Verify schema and migration metadata
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          export DB_NAME="$TEST_DB"
+          export DB_USER="$TEST_USER"
+          export DB_PASSWORD="$TEST_PASS"
+          export DB_HOST=127.0.0.1
+          export DB_PORT=3306
+          export DB_SSL_VERIFY=false
+          export DB_SSL_CA=/tmp/unused-ca.pem
+          php bin/verify-schema.php
+
+          mysql_sql() {
+            mysql --host=127.0.0.1 --port=3306 --user="$TEST_USER" --password="$TEST_PASS" "$TEST_DB" --batch --silent -N -e "$1"
+          }
+
+          required_tables=(
+            users
+            schedules
+            shifts
+            leave_requests
+            shift_swap_requests
+            time_entries
+            notifications
+            employee_pay_rates
+            schema_migrations
+          )
+          for table_name in "${required_tables[@]}"; do
+            count="$(mysql_sql "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = '${table_name}';")"
+            if [[ "$count" != "1" ]]; then
+              echo "Missing required table: ${table_name}" >&2
+              exit 1
+            fi
+          done
+
+          for pair in \
+            "users.photo_url" \
+            "schedules.assigned_role" \
+            "schedules.location"; do
+            table_name="${pair%%.*}"
+            column_name="${pair#*.}"
+            count="$(mysql_sql "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = '${table_name}' AND column_name = '${column_name}';")"
+            if [[ "$count" != "1" ]]; then
+              echo "Missing required column: ${pair}" >&2
+              exit 1
+            fi
+          done
+
+          applied_count="$(mysql_sql "SELECT COUNT(*) FROM schema_migrations WHERE version IN ('001_initial_foundation', '002_dashboard_profile_schedule_fields') AND migration_status = 'applied';")"
+          if [[ "$applied_count" != "2" ]]; then
+            echo "Expected both baseline migrations to be recorded as applied." >&2
+            exit 1
+          fi
+
+          unfinished_count="$(mysql_sql "SELECT COUNT(*) FROM schema_migrations WHERE migration_status != 'applied';")"
+          if [[ "$unfinished_count" != "0" ]]; then
+            echo "There are unfinished or failed migration records." >&2
+            exit 1
+          fi
+
+      - name: Cleanup temporary database and user
+        if: always()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          if [[ -n "${TEST_DB:-}" && "${TEST_DB}" =~ ^[A-Za-z0-9_]+$ ]]; then
+            mysql --host=127.0.0.1 --port=3306 --user=root --password="$MYSQL_ROOT_PASSWORD" --batch --silent -e "DROP DATABASE IF EXISTS \`${TEST_DB}\`;"
+          fi
+          if [[ -n "${TEST_USER:-}" && "${TEST_USER}" =~ ^[A-Za-z0-9_]+$ ]]; then
+            mysql --host=127.0.0.1 --port=3306 --user=root --password="$MYSQL_ROOT_PASSWORD" --batch --silent -e "DROP USER IF EXISTS '${TEST_USER}'@'%';"
+          fi
