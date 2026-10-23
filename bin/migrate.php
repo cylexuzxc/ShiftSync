@@ -4,6 +4,108 @@ declare(strict_types=1);
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../config/schema.php';
 
+function migration_object_exists(PDO $pdo, string $tableName, string $objectName, string $objectType): bool
+{
+    switch ($objectType) {
+        case 'column':
+            $stmt = $pdo->prepare(
+                'SELECT 1 FROM information_schema.columns
+                 WHERE table_schema = DATABASE() AND table_name = :table_name AND column_name = :object_name LIMIT 1'
+            );
+            $stmt->execute(['table_name' => $tableName, 'object_name' => $objectName]);
+            return (bool) $stmt->fetchColumn();
+
+        case 'index':
+            $stmt = $pdo->prepare(
+                'SELECT 1 FROM information_schema.statistics
+                 WHERE table_schema = DATABASE() AND table_name = :table_name AND index_name = :object_name LIMIT 1'
+            );
+            $stmt->execute(['table_name' => $tableName, 'object_name' => $objectName]);
+            return (bool) $stmt->fetchColumn();
+
+        case 'constraint':
+            $stmt = $pdo->prepare(
+                'SELECT 1 FROM information_schema.table_constraints
+                 WHERE constraint_schema = DATABASE() AND table_name = :table_name AND constraint_name = :object_name LIMIT 1'
+            );
+            $stmt->execute(['table_name' => $tableName, 'object_name' => $objectName]);
+            return (bool) $stmt->fetchColumn();
+
+        default:
+            throw new InvalidArgumentException('Unsupported migration object type: ' . $objectType);
+    }
+}
+
+function apply_migration(PDO $pdo, string $version, string $path): bool
+{
+    $sql = file_get_contents($path);
+    if ($sql === false) {
+        throw new RuntimeException('Unable to read migration ' . $version . '.');
+    }
+
+    if ($version === '002_dashboard_profile_schedule_fields') {
+        $operations = [
+            ['table' => 'users', 'object' => 'photo_url', 'type' => 'column', 'statement' => 'ALTER TABLE users ADD COLUMN photo_url VARCHAR(500) NULL'],
+            ['table' => 'schedules', 'object' => 'assigned_role', 'type' => 'column', 'statement' => 'ALTER TABLE schedules ADD COLUMN assigned_role VARCHAR(120) NULL'],
+            ['table' => 'schedules', 'object' => 'location', 'type' => 'column', 'statement' => 'ALTER TABLE schedules ADD COLUMN location VARCHAR(160) NULL'],
+        ];
+
+        foreach ($operations as $operation) {
+            if (!migration_object_exists($pdo, $operation['table'], $operation['object'], $operation['type'])) {
+                $pdo->exec($operation['statement']);
+            }
+        }
+
+        return true;
+    }
+
+    $statements = preg_split('/;\s*(?:\r?\n|$)/', $sql);
+    if ($statements === false) {
+        throw new RuntimeException('Unable to parse migration ' . $version . '.');
+    }
+
+    foreach ($statements as $statement) {
+        $statement = preg_replace('/^\s*--.*$/m', '', trim($statement));
+        if ($statement === null || trim($statement) === '') {
+            continue;
+        }
+
+        if (preg_match(
+            '/^ALTER TABLE\s+`?([a-zA-Z0-9_]+)`?\s+ADD COLUMN\s+`?([a-zA-Z0-9_]+)`?/i',
+            $statement,
+            $matches
+        )) {
+            if (migration_object_exists($pdo, $matches[1], $matches[2], 'column')) {
+                continue;
+            }
+        }
+
+        if (preg_match(
+            '/^CREATE\s+(UNIQUE\s+)?INDEX\s+`?([a-zA-Z0-9_]+)`?\s+ON\s+`?([a-zA-Z0-9_]+)`?/i',
+            $statement,
+            $matches
+        )) {
+            if (migration_object_exists($pdo, $matches[3], $matches[2], 'index')) {
+                continue;
+            }
+        }
+
+        if (preg_match(
+            '/^ALTER TABLE\s+`?([a-zA-Z0-9_]+)`?\s+ADD\s+CONSTRAINT\s+`?([a-zA-Z0-9_]+)`?/i',
+            $statement,
+            $matches
+        )) {
+            if (migration_object_exists($pdo, $matches[1], $matches[2], 'constraint')) {
+                continue;
+            }
+        }
+
+        $pdo->exec($statement);
+    }
+
+    return true;
+}
+
 $migrations = [
     '001_initial_foundation' => __DIR__ . '/../schema.sql',
     '002_dashboard_profile_schedule_fields' => __DIR__ . '/../database/migrations/002_dashboard_profile_schedule_fields.sql',
@@ -87,35 +189,15 @@ try {
             throw new RuntimeException('Unrecognized migration state; refusing to continue.');
         }
 
-        $sql = file_get_contents($path);
-        if ($sql === false) {
-            throw new RuntimeException('Unable to read migration ' . $version . '.');
-        }
-        $statements = preg_split('/;\s*(?:\r?\n|$)/', $sql);
-        if ($statements === false) {
-            throw new RuntimeException('Unable to parse migration ' . $version . '.');
-        }
-        foreach ($statements as $statement) {
-            $statement = preg_replace('/^\s*--.*$/m', '', trim($statement));
-            if ($statement === null || trim($statement) === '') {
-                continue;
+        $migrationSucceeded = false;
+        try {
+            $migrationSucceeded = apply_migration($pdo, $version, $path);
+        } finally {
+            if (!$migrationSucceeded) {
+                $pdo->prepare(
+                    'UPDATE schema_migrations SET migration_status = \'applying\' WHERE version = :version'
+                )->execute(['version' => $version]);
             }
-
-            if (preg_match(
-                '/^ALTER TABLE `?([a-zA-Z0-9_]+)`?\s+ADD COLUMN `?([a-zA-Z0-9_]+)`?/i',
-                $statement,
-                $matches
-            )) {
-                $columnExists = $pdo->prepare(
-                    'SELECT 1 FROM information_schema.columns
-                     WHERE table_schema = DATABASE() AND table_name = :table AND column_name = :column'
-                );
-                $columnExists->execute(['table' => $matches[1], 'column' => $matches[2]]);
-                if ($columnExists->fetchColumn()) {
-                    continue;
-                }
-            }
-            $pdo->exec($statement);
         }
 
         $finishMigration = $pdo->prepare(

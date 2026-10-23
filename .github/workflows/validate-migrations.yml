@@ -70,9 +70,9 @@ jobs:
             mysql --host=127.0.0.1 --port=3306 --user=root --password="$MYSQL_ROOT_PASSWORD" --batch --silent -e "$sql"
           }
 
-          mysql_exec "CREATE DATABASE IF NOT EXISTS \`${TEST_DB}\`;"
+          mysql_exec "CREATE DATABASE IF NOT EXISTS ${TEST_DB};"
           mysql_exec "CREATE USER IF NOT EXISTS '${TEST_USER}'@'%' IDENTIFIED BY '${TEST_PASS}';"
-          mysql_exec "GRANT ALL PRIVILEGES ON \`${TEST_DB}\`.* TO '${TEST_USER}'@'%'; FLUSH PRIVILEGES;"
+          mysql_exec "GRANT ALL PRIVILEGES ON ${TEST_DB}.* TO '${TEST_USER}'@'%'; FLUSH PRIVILEGES;"
 
       - name: Bootstrap database and run fresh migration
         shell: bash
@@ -176,7 +176,7 @@ jobs:
           set -Eeuo pipefail
 
           if [[ -n "${TEST_DB:-}" && "${TEST_DB}" =~ ^[A-Za-z0-9_]+$ ]]; then
-            mysql --host=127.0.0.1 --port=3306 --user=root --password="$MYSQL_ROOT_PASSWORD" --batch --silent -e "DROP DATABASE IF EXISTS \`${TEST_DB}\`;"
+            mysql --host=127.0.0.1 --port=3306 --user=root --password="$MYSQL_ROOT_PASSWORD" --batch --silent -e "DROP DATABASE IF EXISTS ${TEST_DB};"
           fi
           if [[ -n "${TEST_USER:-}" && "${TEST_USER}" =~ ^[A-Za-z0-9_]+$ ]]; then
             mysql --host=127.0.0.1 --port=3306 --user=root --password="$MYSQL_ROOT_PASSWORD" --batch --silent -e "DROP USER IF EXISTS '${TEST_USER}'@'%';"
