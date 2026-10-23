@@ -116,6 +116,16 @@ function showToast(message, type = 'success') {
             });
         }
 
+        function formatLocalDate(date) {
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+        }
+
+        function getTodayDate() {
+            return formatLocalDate(new Date());
+        }
 
         window.exportTimeLogsCSV = function() {
             let csvContent = "data:text/csv;charset=utf-8,";
@@ -159,13 +169,17 @@ function showToast(message, type = 'success') {
         window.openLeaveModal = function() {
             const modal = document.getElementById('leave-modal');
             if (!modal) return;
-            const todayStr = new Date().toISOString().split('T')[0];
+            const todayStr = getTodayDate();
             const tomorrow = new Date();
             tomorrow.setDate(tomorrow.getDate() + 1);
-            const tomorrowStr = tomorrow.toISOString().split('T')[0];
+            const tomorrowStr = formatLocalDate(tomorrow);
 
-            document.getElementById('modal-leave-start').value = todayStr;
-            document.getElementById('modal-leave-end').value = tomorrowStr;
+            const startInput = document.getElementById('modal-leave-start');
+            const endInput = document.getElementById('modal-leave-end');
+            startInput.min = todayStr;
+            endInput.min = todayStr;
+            startInput.value = todayStr;
+            endInput.value = tomorrowStr;
             modal.classList.remove('hidden');
         };
 
@@ -205,7 +219,9 @@ function showToast(message, type = 'success') {
             if (!modal) return;
             const userSelect = document.getElementById('modal-shift-user');
             userSelect.innerHTML = State.users.map(u => `<option value="${u.name}">${u.name} (${u.role})</option>`).join('');
-            document.getElementById('modal-shift-date').value = new Date().toISOString().split('T')[0];
+            const dateInput = document.getElementById('modal-shift-date');
+            dateInput.min = getTodayDate();
+            dateInput.value = getTodayDate();
             modal.classList.remove('hidden');
         };
 
@@ -349,6 +365,12 @@ function showToast(message, type = 'success') {
             const leaveForm = document.getElementById('leave-modal-form');
             if (leaveForm && !leaveForm.dataset.bound) {
                 leaveForm.dataset.bound = "true";
+                const leaveStart = document.getElementById('modal-leave-start');
+                const leaveEnd = document.getElementById('modal-leave-end');
+                leaveStart.addEventListener('change', () => {
+                    leaveEnd.min = leaveStart.value > getTodayDate() ? leaveStart.value : getTodayDate();
+                    if (leaveEnd.value < leaveEnd.min) leaveEnd.value = leaveEnd.min;
+                });
                 leaveForm.onsubmit = function(e) {
                     e.preventDefault();
                     const type = document.getElementById('modal-leave-type').value;
@@ -356,7 +378,7 @@ function showToast(message, type = 'success') {
                     const end = document.getElementById('modal-leave-end').value;
                     const reason = document.getElementById('modal-leave-reason').value.trim();
 
-                    if (!start || !end || start > end) {
+                    if (!start || !end || start < getTodayDate() || end < getTodayDate() || start > end) {
                         showToast('Choose a valid leave date range.', 'error');
                         return;
                     }
@@ -394,6 +416,11 @@ function showToast(message, type = 'success') {
                     const type = document.getElementById('modal-shift-type').value;
                     const time = document.getElementById('modal-shift-time').value.trim();
                     const role = document.getElementById('modal-shift-role').value.trim();
+
+                    if (!date || date < getTodayDate()) {
+                        showToast('Choose today or a future date for the shift.', 'error');
+                        return;
+                    }
 
                     if (State.shifts.some(shift => shift.employee === employee && shift.date === date)) {
                         showToast('This employee already has a shift on that date.', 'error');
