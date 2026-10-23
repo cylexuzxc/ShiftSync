@@ -114,13 +114,29 @@ function load_environment_file(): void
     $loaded = true;
 }
 
+function resolve_database_host(): string
+{
+    $host = getenv('DB_HOST');
+    $host = is_string($host) ? trim($host) : '';
+
+    if ($host === 'db' && !is_file('/.dockerenv')) {
+        return '127.0.0.1';
+    }
+
+    if ($host !== '') {
+        return $host;
+    }
+
+    return is_file('/.dockerenv') ? 'db' : '127.0.0.1';
+}
+
 function database_config_summary(): array
 {
     load_environment_file();
 
     return [
         'env_file' => resolve_environment_file(),
-        'host' => getenv('DB_HOST') ?: 'unset',
+        'host' => resolve_database_host(),
         'port' => getenv('DB_PORT') ?: '3306',
         'database' => getenv('DB_NAME') ?: 'unset',
         'username' => getenv('DB_USER') ?: 'unset',
@@ -137,7 +153,7 @@ function database_connection(): PDO
         throw new RuntimeException('PDO MySQL extension is not available. Install php-mysql or use the Compose app service.');
     }
 
-    $host = getenv('DB_HOST');
+    $host = resolve_database_host();
     $port = getenv('DB_PORT') ?: '3306';
     $name = getenv('DB_NAME');
     $user = getenv('DB_USER');
